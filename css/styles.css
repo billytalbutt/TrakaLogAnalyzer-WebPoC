@@ -232,6 +232,7 @@ body {
     height: 200px;
     width: auto;
     margin-bottom: 1.5rem;
+    border-radius: 24px;
 }
 
 .hero-icons {
