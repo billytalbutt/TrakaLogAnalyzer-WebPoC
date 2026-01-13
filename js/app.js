@@ -217,6 +217,9 @@ function loadFile(file) {
             displayLog(state.files[0]);
         }
         
+        // Navigate to viewer for better UX
+        navigateTo('viewer');
+        
         showToast(`Loaded ${file.name} (${formatFileSize(file.size)})`, 'success');
     };
     
