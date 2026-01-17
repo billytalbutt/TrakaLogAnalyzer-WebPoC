@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css">
     <link rel="icon" type="image/png" href="img/trakaweb-logo.png">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -51,6 +52,14 @@
                     </svg>
                     <span>Issues</span>
                     <span class="nav-badge" id="issuesBadge">0</span>
+                </li>
+                <li class="nav-item" data-page="analytics">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="20" x2="12" y2="10"></line>
+                        <line x1="18" y1="20" x2="18" y2="4"></line>
+                        <line x1="6" y1="20" x2="6" y2="16"></line>
+                    </svg>
+                    <span>Analytics</span>
                 </li>
                 <li class="nav-item" data-page="settings">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -185,6 +194,20 @@
                         </select>
                     </div>
                     <div class="toolbar-actions">
+                        <button class="btn btn-secondary" id="liveTailBtn" onclick="toggleLiveTail()" title="Start/Stop live tail monitoring">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                            Live Tail
+                        </button>
+                        <button class="btn btn-secondary" id="autoScrollBtn" onclick="toggleAutoScroll()" title="Toggle auto-scroll to bottom">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                        </button>
                         <button class="btn btn-secondary" onclick="document.getElementById('viewerFileInput').click()">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -232,6 +255,20 @@
                         </button>
                         <button class="filter-chip" data-level="debug">
                             <span class="chip-dot debug"></span>Debug
+                        </button>
+                    </div>
+                    
+                    <!-- Engine Filters -->
+                    <div class="engine-filters">
+                        <span class="engine-filter-label">Engines:</span>
+                        <button class="engine-filter-chip" data-engine="business" onclick="toggleEngineFilter('business')">
+                            🏢 Business
+                        </button>
+                        <button class="engine-filter-chip" data-engine="comms" onclick="toggleEngineFilter('comms')">
+                            📡 Comms
+                        </button>
+                        <button class="engine-filter-chip" data-engine="integration" onclick="toggleEngineFilter('integration')">
+                            🔌 Integration
                         </button>
                     </div>
                     
@@ -287,7 +324,15 @@
                             Add Files
                         </button>
                         <input type="file" id="compareFileInput" accept=".log,.txt" multiple hidden>
-                        <button class="btn btn-secondary" onclick="syncScroll = !syncScroll; this.classList.toggle('active', syncScroll)">
+                        <button class="btn btn-secondary" id="compareLiveTailBtn" onclick="toggleLiveTail()" title="Start/Stop live tail monitoring for all files">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                            Live Tail
+                        </button>
+                        <button class="btn btn-secondary" id="syncScrollBtn" onclick="toggleSyncScroll()">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="17 1 21 5 17 9"></polyline>
                                 <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
@@ -375,6 +420,184 @@
                         </svg>
                         <p>No issues detected</p>
                         <span>Load log files to automatically detect issues</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Analytics Page -->
+            <section class="page" id="page-analytics">
+                <div class="page-header">
+                    <h2>Analytics Dashboard</h2>
+                    <p>Visual insights and statistics from your log files</p>
+                </div>
+
+                <!-- Analytics Overview Cards -->
+                <div class="analytics-overview">
+                    <div class="analytics-card primary">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Total Issues</span>
+                            <span class="card-value" id="analyticsTotal">0</span>
+                            <span class="card-change positive" id="analyticsTrend">—</span>
+                        </div>
+                    </div>
+
+                    <div class="analytics-card critical">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="15" y1="9" x2="9" y2="15"></line>
+                                <line x1="9" y1="9" x2="15" y2="15"></line>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Critical</span>
+                            <span class="card-value" id="analyticsCritical">0</span>
+                            <span class="card-percentage" id="analyticsCriticalPct">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="analytics-card error">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Errors</span>
+                            <span class="card-value" id="analyticsErrors">0</span>
+                            <span class="card-percentage" id="analyticsErrorsPct">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="analytics-card warning">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Warnings</span>
+                            <span class="card-value" id="analyticsWarnings">0</span>
+                            <span class="card-percentage" id="analyticsWarningsPct">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="analytics-card performance">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Performance</span>
+                            <span class="card-value" id="analyticsPerformance">0</span>
+                            <span class="card-percentage" id="analyticsPerformancePct">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="analytics-card info">
+                        <div class="card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">Files Analyzed</span>
+                            <span class="card-value" id="analyticsFiles">0</span>
+                            <span class="card-change" id="analyticsLinesTotal">0 lines</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Grid -->
+                <div class="charts-grid">
+                    <!-- Severity Distribution Chart -->
+                    <div class="chart-container">
+                        <div class="chart-header">
+                            <h3>Issue Distribution by Severity</h3>
+                            <button class="btn-icon" onclick="refreshCharts()" title="Refresh charts">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="severityChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Timeline Chart -->
+                    <div class="chart-container">
+                        <div class="chart-header">
+                            <h3>Issues Over Time</h3>
+                            <select class="chart-filter" id="timelineFilter" onchange="updateTimelineChart()">
+                                <option value="hour">By Hour</option>
+                                <option value="minute">By Minute</option>
+                                <option value="file">By File</option>
+                            </select>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="timelineChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top Issues Chart -->
+                    <div class="chart-container wide">
+                        <div class="chart-header">
+                            <h3>Most Common Issues</h3>
+                            <span class="chart-subtitle">Top 10 issue types detected</span>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="topIssuesChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- File Comparison Chart -->
+                    <div class="chart-container wide">
+                        <div class="chart-header">
+                            <h3>Issues by File</h3>
+                            <span class="chart-subtitle">Distribution across loaded log files</span>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="fileComparisonChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Insights Section -->
+                <div class="analytics-insights">
+                    <div class="insight-card">
+                        <div class="insight-icon critical">⚠️</div>
+                        <div class="insight-content">
+                            <h4>Critical Findings</h4>
+                            <p id="insightCritical">No critical issues detected</p>
+                        </div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-icon trend">📈</div>
+                        <div class="insight-content">
+                            <h4>Trend Analysis</h4>
+                            <p id="insightTrend">Load log files to see trends</p>
+                        </div>
+                    </div>
+                    <div class="insight-card">
+                        <div class="insight-icon recommendation">💡</div>
+                        <div class="insight-content">
+                            <h4>Recommendations</h4>
+                            <p id="insightRecommendation">Analyze logs to get recommendations</p>
+                        </div>
                     </div>
                 </div>
             </section>

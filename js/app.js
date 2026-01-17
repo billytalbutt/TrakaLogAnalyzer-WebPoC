@@ -16,6 +16,16 @@ const state = {
     activeFilter: 'all',
     activeCategory: 'all',
     syncScroll: false,
+    liveTailActive: false,
+    liveTailInterval: null,
+    liveTailFileHandles: new Map(), // Store file handles for live monitoring
+    lastReadPositions: new Map(), // Track last read position per file
+    autoScrollEnabled: true,
+    engineFilters: {
+        business: false,
+        comms: false,
+        integration: false
+    },
     settings: {
         detectErrors: true,
         detectExceptions: true,
@@ -32,7 +42,9 @@ const state = {
         wordWrap: true,
         showLineNumbers: true,
         highlightSearch: true,
-        customPatterns: []
+        customPatterns: [],
+        tailRefreshInterval: 1000, // 1 second refresh for live tail
+        maxTailLines: 10000 // Maximum lines to keep in tail mode
     }
 };
 
@@ -124,6 +136,14 @@ function navigateTo(page) {
     document.querySelectorAll('.page').forEach(p => {
         p.classList.toggle('active', p.id === `page-${page}`);
     });
+    
+    // Trigger page-specific initialization
+    if (page === 'analytics') {
+        // Update analytics when navigating to the page
+        if (state.issues && state.issues.length > 0) {
+            updateAnalytics();
+        }
+    }
 }
 
 // ============================================
@@ -190,7 +210,8 @@ function loadFile(file) {
             size: file.size,
             lastModified: new Date(file.lastModified),
             content: content,
-            lines: content.split('\n')
+            lines: content.split('\n'),
+            fileHandle: file // Store original File object for live monitoring
         };
         
         // Check if file already loaded
@@ -200,6 +221,9 @@ function loadFile(file) {
         } else {
             state.files.push(fileData);
         }
+        
+        // Initialize last read position for live tail
+        state.lastReadPositions.set(file.name, content.length);
         
         // Parse and analyze
         parseLogFile(fileData);
@@ -329,6 +353,7 @@ function detectIssues(fileData) {
     state.issues.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
     
     updateIssuesUI();
+    updateAnalytics(); // Update analytics dashboard
 }
 
 function shouldDetectIssue(pattern) {
@@ -409,6 +434,53 @@ function filterLines(parsed) {
     // Level filter
     if (state.activeFilter !== 'all') {
         filtered = filtered.filter(entry => entry.level === state.activeFilter);
+    }
+    
+    // Engine filter - using ACCURATE patterns based on real Traka log format
+    const hasActiveEngineFilter = Object.values(state.engineFilters).some(v => v);
+    if (hasActiveEngineFilter) {
+        filtered = filtered.filter(entry => {
+            const line = entry.raw;
+            
+            // Check if line matches any active engine filter
+            if (state.engineFilters.comms) {
+                // Comms Engine Manager patterns
+                if (/\bcenmgr:/i.test(line) ||
+                    /\bcomms engine on\b/i.test(line) ||
+                    /\bce-comms engine\b/i.test(line) ||
+                    /\bce ['"]comms engine/i.test(line) ||
+                    /\bcem comms channel\b/i.test(line)) {
+                    return true;
+                }
+            }
+            
+            if (state.engineFilters.integration) {
+                // Integration Engine Manager patterns
+                if (/\bienmgr:/i.test(line) ||
+                    /\bintegration engine on\b/i.test(line) ||
+                    /\bie-integration engine\b/i.test(line) ||
+                    /\bcreating ie manager\b/i.test(line)) {
+                    return true;
+                }
+            }
+            
+            if (state.engineFilters.business) {
+                // Business Engine specific patterns (module prefixes and messages)
+                if (/\bbesvch:/i.test(line) ||
+                    /\benghlp:/i.test(line) ||
+                    /\bdbintg:/i.test(line) ||
+                    /\bdbhlp:/i.test(line) ||
+                    /\bjobpro:/i.test(line) ||
+                    /\bsvcmgr:/i.test(line) ||
+                    /\baccpro:/i.test(line) ||
+                    /\btraka business engine (started|stopped|v\d)/i.test(line) ||
+                    /\bbusiness engine database/i.test(line)) {
+                    return true;
+                }
+            }
+            
+            return false; // Doesn't match any active filter
+        });
     }
     
     // Date filter
@@ -649,6 +721,32 @@ function initFilters() {
     });
 }
 
+function toggleEngineFilter(engine) {
+    state.engineFilters[engine] = !state.engineFilters[engine];
+    
+    // Update button visual state
+    const btn = document.querySelector(`[data-engine="${engine}"]`);
+    if (btn) {
+        btn.classList.toggle('active', state.engineFilters[engine]);
+    }
+    
+    // Refresh display
+    if (state.currentFileIndex >= 0) {
+        displayLog(state.files[state.currentFileIndex]);
+    }
+    
+    // Show feedback
+    const activeEngines = Object.entries(state.engineFilters)
+        .filter(([_, active]) => active)
+        .map(([name, _]) => name.charAt(0).toUpperCase() + name.slice(1));
+    
+    if (activeEngines.length > 0) {
+        showToast(`Filtering by: ${activeEngines.join(', ')} Engine${activeEngines.length > 1 ? 's' : ''}`, 'info');
+    } else {
+        showToast('Engine filters cleared', 'info');
+    }
+}
+
 function clearDateFilter() {
     document.getElementById('dateFrom').value = '';
     document.getElementById('dateTo').value = '';
@@ -672,11 +770,14 @@ function updateCompareView() {
                     <rect x="14" y="3" width="7" height="18" rx="1"></rect>
                 </svg>
                 <p>No logs loaded for comparison</p>
-                <span>Load two or more log files to compare them side by side</span>
+                <span>Load two or more log files to compare them side by side (supports up to 6 files in grid view)</span>
             </div>
         `;
         return;
     }
+    
+    // Set data attribute for grid layout
+    container.setAttribute('data-file-count', state.files.length);
     
     container.innerHTML = state.files.map((file, index) => `
         <div class="compare-panel" data-index="${index}">
@@ -688,6 +789,7 @@ function updateCompareView() {
                     </svg>
                     ${escapeHtml(file.name)}
                 </h4>
+                <div class="file-badge">${file.lines.length.toLocaleString()} lines</div>
                 <button class="btn-icon" onclick="removeFile(${index})" title="Remove file">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -720,6 +822,18 @@ function handleCompareScroll(event, sourceIndex) {
     });
 }
 
+function toggleSyncScroll() {
+    state.syncScroll = !state.syncScroll;
+    const btn = document.getElementById('syncScrollBtn');
+    if (state.syncScroll) {
+        btn.classList.add('active');
+        showToast('Sync Scroll enabled - panels will scroll together', 'success');
+    } else {
+        btn.classList.remove('active');
+        showToast('Sync Scroll disabled', 'info');
+    }
+}
+
 function highlightDifferences() {
     // Simple difference highlighting - marks lines that are unique to each file
     if (state.files.length < 2) {
@@ -728,6 +842,8 @@ function highlightDifferences() {
     }
     
     const allLines = state.files.map(f => new Set(f.lines.map(l => l.trim())));
+    let uniqueCounts = Array(state.files.length).fill(0);
+    let commonCount = 0;
     
     document.querySelectorAll('.compare-panel').forEach((panel, fileIndex) => {
         const lines = panel.querySelectorAll('.log-line');
@@ -737,15 +853,125 @@ function highlightDifferences() {
             const lineText = state.files[fileIndex].lines[lineIdx]?.trim();
             const isUnique = !otherFiles.some(set => set.has(lineText));
             
+            // Remove both highlight classes first
+            lineEl.classList.remove('highlight-unique', 'highlight-common');
+            
             if (isUnique && lineText) {
-                lineEl.classList.add('highlight');
-            } else {
-                lineEl.classList.remove('highlight');
+                lineEl.classList.add('highlight-unique');
+                uniqueCounts[fileIndex]++;
+            } else if (lineText) {
+                lineEl.classList.add('highlight-common');
+                commonCount++;
             }
         });
     });
     
-    showToast('Unique lines highlighted in each file', 'info');
+    // Show beautiful diff summary panel
+    showDiffSummary(uniqueCounts, commonCount);
+}
+
+function showDiffSummary(uniqueCounts, commonCount) {
+    // Create a beautiful diff summary panel
+    const summaryHTML = `
+        <div class="diff-summary-overlay" onclick="closeDiffSummary()">
+            <div class="diff-summary-panel" onclick="event.stopPropagation()">
+                <div class="diff-summary-header">
+                    <h3>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 16v-4"></path>
+                            <path d="M12 8h.01"></path>
+                        </svg>
+                        Difference Analysis
+                    </h3>
+                    <button class="btn-icon" onclick="closeDiffSummary()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                
+                <div class="diff-summary-content">
+                    <div class="diff-legend">
+                        <div class="diff-legend-item">
+                            <div class="diff-legend-box unique"></div>
+                            <div class="diff-legend-text">
+                                <strong>Red (Unique Lines)</strong>
+                                <p>Lines that only exist in this file - differences from other files</p>
+                            </div>
+                        </div>
+                        <div class="diff-legend-item">
+                            <div class="diff-legend-box common"></div>
+                            <div class="diff-legend-text">
+                                <strong>Blue (Common Lines)</strong>
+                                <p>Lines that appear in multiple files - shared content</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="diff-stats">
+                        <h4>📊 Statistics</h4>
+                        ${state.files.map((file, idx) => `
+                            <div class="diff-stat-file">
+                                <div class="diff-stat-filename">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                    </svg>
+                                    ${escapeHtml(file.name)}
+                                </div>
+                                <div class="diff-stat-numbers">
+                                    <span class="diff-stat-unique">
+                                        <strong>${uniqueCounts[idx]}</strong> unique lines
+                                    </span>
+                                    <span class="diff-stat-common">
+                                        <strong>${file.lines.length - uniqueCounts[idx]}</strong> common lines
+                                    </span>
+                                    <span class="diff-stat-total">
+                                        Total: <strong>${file.lines.length}</strong> lines
+                                    </span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div class="diff-summary-tip">
+                        💡 <strong>Tip:</strong> Scroll through the comparison panels to see highlighted lines. 
+                        Red indicates differences, blue shows commonalities.
+                    </div>
+                </div>
+                
+                <div class="diff-summary-footer">
+                    <button class="btn btn-secondary" onclick="clearHighlights()">Clear Highlights</button>
+                    <button class="btn btn-primary" onclick="closeDiffSummary()">Got It</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing summary if present
+    const existing = document.querySelector('.diff-summary-overlay');
+    if (existing) existing.remove();
+    
+    // Add new summary
+    document.body.insertAdjacentHTML('beforeend', summaryHTML);
+}
+
+function closeDiffSummary() {
+    const overlay = document.querySelector('.diff-summary-overlay');
+    if (overlay) {
+        overlay.style.animation = 'fadeOut 0.2s ease-out';
+        setTimeout(() => overlay.remove(), 200);
+    }
+}
+
+function clearHighlights() {
+    document.querySelectorAll('.log-line').forEach(line => {
+        line.classList.remove('highlight-unique', 'highlight-common');
+    });
+    closeDiffSummary();
+    showToast('Highlights cleared', 'info');
 }
 
 function removeFile(index) {
@@ -753,6 +979,7 @@ function removeFile(index) {
     state.files.splice(index, 1);
     state.parsedLogs.delete(fileName);
     state.issues = state.issues.filter(i => i.file !== fileName);
+    state.lastReadPositions.delete(fileName);
     
     if (state.currentFileIndex === index) {
         state.currentFileIndex = state.files.length > 0 ? 0 : -1;
@@ -770,6 +997,259 @@ function removeFile(index) {
         displayLog(state.files[state.currentFileIndex]);
     } else {
         displayLog(null);
+    }
+}
+
+// ============================================
+// Live Tail Functionality
+// ============================================
+
+/**
+ * Toggle live tail mode on/off
+ */
+function toggleLiveTail() {
+    if (state.liveTailActive) {
+        stopLiveTail();
+    } else {
+        startLiveTail();
+    }
+}
+
+/**
+ * Start live tail monitoring
+ */
+function startLiveTail() {
+    if (state.files.length === 0) {
+        showToast('Load at least one log file first', 'warning');
+        return;
+    }
+    
+    state.liveTailActive = true;
+    updateLiveTailButton();
+    
+    // Start polling for file changes
+    state.liveTailInterval = setInterval(() => {
+        checkForFileUpdates();
+    }, state.settings.tailRefreshInterval);
+    
+    showToast('Live Tail started - monitoring log files for changes', 'success');
+    
+    // Enable auto-scroll
+    state.autoScrollEnabled = true;
+}
+
+/**
+ * Stop live tail monitoring
+ */
+function stopLiveTail() {
+    state.liveTailActive = false;
+    
+    if (state.liveTailInterval) {
+        clearInterval(state.liveTailInterval);
+        state.liveTailInterval = null;
+    }
+    
+    updateLiveTailButton();
+    showToast('Live Tail stopped', 'info');
+}
+
+/**
+ * Check all loaded files for updates
+ */
+async function checkForFileUpdates() {
+    if (!state.liveTailActive) return;
+    
+    for (let i = 0; i < state.files.length; i++) {
+        const fileData = state.files[i];
+        
+        try {
+            // Re-read the file to check for new content
+            const response = await readFileForTail(fileData.fileHandle);
+            if (response && response.newContent) {
+                // New content detected
+                appendNewContent(fileData, response.newContent, response.newLines);
+            }
+        } catch (error) {
+            console.error(`Error checking file ${fileData.name}:`, error);
+            // File might have been moved or deleted, continue monitoring others
+        }
+    }
+}
+
+/**
+ * Read file and detect new content
+ * In browser, we simulate this by re-reading the entire file
+ */
+async function readFileForTail(fileHandle) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        
+        reader.onload = (e) => {
+            const fullContent = e.target.result;
+            const fileName = fileHandle.name;
+            const lastPosition = state.lastReadPositions.get(fileName) || 0;
+            
+            if (fullContent.length > lastPosition) {
+                // New content available
+                const newContent = fullContent.substring(lastPosition);
+                const newLines = newContent.split('\n').filter(line => line.trim());
+                
+                // Update last read position
+                state.lastReadPositions.set(fileName, fullContent.length);
+                
+                resolve({ newContent, newLines });
+            } else {
+                resolve(null); // No new content
+            }
+        };
+        
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(fileHandle);
+    });
+}
+
+/**
+ * Append new content to file data and update display
+ */
+function appendNewContent(fileData, newContent, newLines) {
+    if (!newLines || newLines.length === 0) return;
+    
+    // Append new lines to file data
+    fileData.lines = fileData.lines.concat(newLines);
+    fileData.content += newContent;
+    fileData.size += newContent.length;
+    
+    // Limit total lines in tail mode to prevent memory issues
+    if (fileData.lines.length > state.settings.maxTailLines) {
+        const excess = fileData.lines.length - state.settings.maxTailLines;
+        fileData.lines = fileData.lines.slice(excess);
+        showToast(`Trimmed ${excess} old lines from ${fileData.name}`, 'info');
+    }
+    
+    // Re-parse new lines
+    parseLogFile(fileData);
+    detectIssues(fileData);
+    
+    // Update UI if this is the currently viewed file
+    const currentFile = state.files[state.currentFileIndex];
+    if (currentFile && currentFile.name === fileData.name) {
+        displayLog(fileData);
+        
+        // Auto-scroll to bottom if enabled
+        if (state.autoScrollEnabled) {
+            scrollToBottom();
+        }
+    }
+    
+    // Update compare view if active
+    const comparePage = document.getElementById('page-compare');
+    if (comparePage && comparePage.classList.contains('active')) {
+        updateCompareView();
+        
+        if (state.autoScrollEnabled) {
+            scrollComparePanelsToBottom();
+        }
+    }
+    
+    // Update stats
+    updateUI();
+    updateIssuesUI();
+    
+    // Show notification for new content
+    const currentPage = document.querySelector('.page.active');
+    if (currentPage && currentPage.id !== 'page-viewer' && currentPage.id !== 'page-compare') {
+        showToast(`${newLines.length} new line(s) in ${fileData.name}`, 'info');
+    }
+}
+
+/**
+ * Scroll viewer to bottom
+ */
+function scrollToBottom() {
+    const logContent = document.getElementById('logContent');
+    if (logContent) {
+        logContent.scrollTop = logContent.scrollHeight;
+    }
+}
+
+/**
+ * Scroll all compare panels to bottom
+ */
+function scrollComparePanelsToBottom() {
+    const panels = document.querySelectorAll('.compare-panel-content');
+    panels.forEach(panel => {
+        panel.scrollTop = panel.scrollHeight;
+    });
+}
+
+/**
+ * Toggle auto-scroll feature
+ */
+function toggleAutoScroll() {
+    state.autoScrollEnabled = !state.autoScrollEnabled;
+    updateAutoScrollButton();
+    
+    if (state.autoScrollEnabled) {
+        showToast('Auto-scroll enabled - will scroll to new lines', 'success');
+        if (state.liveTailActive) {
+            scrollToBottom();
+        }
+    } else {
+        showToast('Auto-scroll disabled', 'info');
+    }
+}
+
+/**
+ * Update live tail button appearance
+ */
+function updateLiveTailButton() {
+    const viewerBtn = document.getElementById('liveTailBtn');
+    const compareBtn = document.getElementById('compareLiveTailBtn');
+    
+    const updateButton = (btn) => {
+        if (!btn) return;
+        
+        if (state.liveTailActive) {
+            btn.classList.add('active');
+            btn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="6" y="4" width="4" height="16"></rect>
+                    <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+                Stop Tail
+            `;
+            btn.title = 'Stop live tail monitoring';
+        } else {
+            btn.classList.remove('active');
+            btn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                Live Tail
+            `;
+            btn.title = 'Start live tail monitoring';
+        }
+    };
+    
+    updateButton(viewerBtn);
+    updateButton(compareBtn);
+}
+
+/**
+ * Update auto-scroll button appearance
+ */
+function updateAutoScrollButton() {
+    const btn = document.getElementById('autoScrollBtn');
+    if (btn) {
+        if (state.autoScrollEnabled) {
+            btn.classList.add('active');
+            btn.title = 'Auto-scroll enabled';
+        } else {
+            btn.classList.remove('active');
+            btn.title = 'Auto-scroll disabled';
+        }
     }
 }
 
@@ -1287,3 +1767,381 @@ function debounce(func, wait) {
 
 // Global sync scroll variable
 let syncScroll = false;
+
+// ============================================
+// Analytics Dashboard
+// ============================================
+let charts = { severity: null, timeline: null, topIssues: null, fileComparison: null };
+
+function updateAnalytics() {
+    console.log('updateAnalytics() called. Issues:', state.issues?.length || 0, 'Files:', state.files?.length || 0);
+    
+    if (!state.issues || state.issues.length === 0) {
+        console.warn('No issues to display in analytics');
+        return;
+    }
+    
+    updateAnalyticsCards();
+    initializeCharts();
+}
+
+function updateAnalyticsCards() {
+    const total = state.issues.length;
+    const critical = state.issues.filter(i => i.severity === 'critical').length;
+    const errors = state.issues.filter(i => i.severity === 'error').length;
+    const warnings = state.issues.filter(i => i.severity === 'warning').length;
+    const performance = state.issues.filter(i => i.category === 'performance').length;
+    
+    console.log('updateAnalyticsCards() - Counts:', { total, critical, errors, warnings, performance });
+    
+    // Update analytics cards
+    const totalEl = document.getElementById('analyticsTotal');
+    const criticalEl = document.getElementById('analyticsCritical');
+    const errorsEl = document.getElementById('analyticsErrors');
+    const warningsEl = document.getElementById('analyticsWarnings');
+    const performanceEl = document.getElementById('analyticsPerformance');
+    const filesEl = document.getElementById('analyticsFiles');
+    const linesTotalEl = document.getElementById('analyticsLinesTotal');
+    
+    console.log('Elements found:', {
+        totalEl: !!totalEl,
+        criticalEl: !!criticalEl,
+        errorsEl: !!errorsEl,
+        warningsEl: !!warningsEl,
+        performanceEl: !!performanceEl,
+        filesEl: !!filesEl,
+        linesTotalEl: !!linesTotalEl
+    });
+    
+    if (totalEl) totalEl.textContent = total.toLocaleString();
+    if (criticalEl) criticalEl.textContent = critical.toLocaleString();
+    if (errorsEl) errorsEl.textContent = errors.toLocaleString();
+    if (warningsEl) warningsEl.textContent = warnings.toLocaleString();
+    if (performanceEl) performanceEl.textContent = performance.toLocaleString();
+    if (filesEl) filesEl.textContent = state.files.length;
+    
+    // Update percentages
+    const criticalPctEl = document.getElementById('analyticsCriticalPct');
+    const errorsPctEl = document.getElementById('analyticsErrorsPct');
+    const warningsPctEl = document.getElementById('analyticsWarningsPct');
+    const performancePctEl = document.getElementById('analyticsPerformancePct');
+    
+    if (criticalPctEl) criticalPctEl.textContent = total > 0 ? `${Math.round(critical / total * 100)}%` : '0%';
+    if (errorsPctEl) errorsPctEl.textContent = total > 0 ? `${Math.round(errors / total * 100)}%` : '0%';
+    if (warningsPctEl) warningsPctEl.textContent = total > 0 ? `${Math.round(warnings / total * 100)}%` : '0%';
+    if (performancePctEl) performancePctEl.textContent = total > 0 ? `${Math.round(performance / total * 100)}%` : '0%';
+    
+    // Update lines total
+    const totalLines = state.files.reduce((sum, f) => sum + f.lines.length, 0);
+    if (linesTotalEl) linesTotalEl.textContent = `${totalLines.toLocaleString()} lines`;
+    
+    console.log('Analytics cards updated successfully');
+    
+    // Update insights
+    updateInsights(critical, errors, warnings, performance);
+}
+
+function updateInsights(critical, errors, warnings, performance) {
+    const criticalInsight = document.getElementById('insightCritical');
+    const trendInsight = document.getElementById('insightTrend');
+    const recommendationInsight = document.getElementById('insightRecommendation');
+    
+    if (criticalInsight) {
+        if (critical > 0) {
+            criticalInsight.textContent = `${critical} critical issue${critical > 1 ? 's' : ''} detected. Immediate attention required!`;
+        } else {
+            criticalInsight.textContent = 'No critical issues detected. System appears stable.';
+        }
+    }
+    
+    if (trendInsight) {
+        const total = state.issues.length;
+        if (total === 0) {
+            trendInsight.textContent = 'Load log files to see issue trends and patterns.';
+        } else if (errors > warnings) {
+            trendInsight.textContent = `Error rate is higher than warnings. Focus on resolving ${errors} error${errors > 1 ? 's' : ''}.`;
+        } else {
+            trendInsight.textContent = `Most issues are warnings. System is relatively stable with ${total} total issue${total > 1 ? 's' : ''}.`;
+        }
+    }
+    
+    if (recommendationInsight) {
+        if (critical > 0) {
+            recommendationInsight.textContent = 'Address critical issues first, then work through errors systematically.';
+        } else if (errors > 0) {
+            recommendationInsight.textContent = 'Review and resolve error messages to improve system reliability.';
+        } else if (warnings > 0) {
+            recommendationInsight.textContent = 'Monitor warnings to prevent them from escalating into errors.';
+        } else {
+            recommendationInsight.textContent = 'System is healthy. Continue monitoring logs regularly.';
+        }
+    }
+}
+
+function initializeCharts() {
+    if (typeof Chart === 'undefined') {
+        console.warn('Chart.js is not loaded. Charts will not be displayed.');
+        return;
+    }
+    
+    createSeverityChart();
+    createTimelineChart();
+    createTopIssuesChart();
+    createFileComparisonChart();
+}
+
+function createSeverityChart() {
+    const ctx = document.getElementById('severityChart');
+    if (!ctx) return;
+    
+    const critical = state.issues.filter(i => i.severity === 'critical').length;
+    const errors = state.issues.filter(i => i.severity === 'error').length;
+    const warnings = state.issues.filter(i => i.severity === 'warning').length;
+    
+    if (charts.severity) charts.severity.destroy();
+    
+    charts.severity = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Critical', 'Error', 'Warning'],
+            datasets: [{
+                data: [critical, errors, warnings],
+                backgroundColor: [
+                    'rgba(220, 38, 38, 0.8)',
+                    'rgba(239, 68, 68, 0.8)',
+                    'rgba(245, 158, 11, 0.8)'
+                ],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#94a3b8',
+                        font: {
+                            family: 'Outfit, sans-serif'
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function createTimelineChart() {
+    const ctx = document.getElementById('timelineChart');
+    if (!ctx) return;
+    
+    const filter = document.getElementById('timelineFilter')?.value || 'file';
+    let labels, data;
+    
+    if (filter === 'file') {
+        labels = state.files.map(f => f.name);
+        data = labels.map(l => state.issues.filter(i => i.file === l).length);
+    } else {
+        // For now, just use file-based data
+        labels = state.files.map(f => f.name);
+        data = labels.map(l => state.issues.filter(i => i.file === l).length);
+    }
+    
+    if (charts.timeline) charts.timeline.destroy();
+    
+    charts.timeline = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Issues',
+                data: data,
+                borderColor: 'rgba(255, 107, 53, 1)',
+                backgroundColor: 'rgba(255, 107, 53, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        color: '#94a3b8'
+                    },
+                    grid: {
+                        color: 'rgba(148, 163, 184, 0.1)'
+                    }
+                },
+                x: {
+                    ticks: {
+                        color: '#94a3b8'
+                    },
+                    grid: {
+                        display: false
+                    }
+                }
+            }
+        }
+    });
+}
+
+function createTopIssuesChart() {
+    const ctx = document.getElementById('topIssuesChart');
+    if (!ctx) return;
+    
+    const issueCounts = {};
+    state.issues.forEach(issue => {
+        issueCounts[issue.title] = (issueCounts[issue.title] || 0) + 1;
+    });
+    
+    const sorted = Object.entries(issueCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+    
+    const labels = sorted.map(s => s[0]);
+    const data = sorted.map(s => s[1]);
+    
+    if (charts.topIssues) charts.topIssues.destroy();
+    
+    charts.topIssues = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Occurrences',
+                data: data,
+                backgroundColor: 'rgba(255, 107, 53, 0.8)',
+                borderWidth: 0
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        color: '#94a3b8'
+                    },
+                    grid: {
+                        color: 'rgba(148, 163, 184, 0.1)'
+                    }
+                },
+                y: {
+                    ticks: {
+                        color: '#94a3b8',
+                        font: {
+                            size: 11
+                        }
+                    },
+                    grid: {
+                        display: false
+                    }
+                }
+            }
+        }
+    });
+}
+
+function createFileComparisonChart() {
+    const ctx = document.getElementById('fileComparisonChart');
+    if (!ctx) return;
+    
+    const labels = state.files.map(f => f.name);
+    const critical = labels.map(l => state.issues.filter(i => i.file === l && i.severity === 'critical').length);
+    const errors = labels.map(l => state.issues.filter(i => i.file === l && i.severity === 'error').length);
+    const warnings = labels.map(l => state.issues.filter(i => i.file === l && i.severity === 'warning').length);
+    
+    if (charts.fileComparison) charts.fileComparison.destroy();
+    
+    charts.fileComparison = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Critical',
+                    data: critical,
+                    backgroundColor: 'rgba(220, 38, 38, 0.8)',
+                    borderWidth: 0
+                },
+                {
+                    label: 'Error',
+                    data: errors,
+                    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                    borderWidth: 0
+                },
+                {
+                    label: 'Warning',
+                    data: warnings,
+                    backgroundColor: 'rgba(245, 158, 11, 0.8)',
+                    borderWidth: 0
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#94a3b8',
+                        font: {
+                            family: 'Outfit, sans-serif'
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    ticks: {
+                        color: '#94a3b8'
+                    },
+                    grid: {
+                        display: false
+                    }
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        color: '#94a3b8'
+                    },
+                    grid: {
+                        color: 'rgba(148, 163, 184, 0.1)'
+                    }
+                }
+            }
+        }
+    });
+}
+
+function updateTimelineChart() {
+    createTimelineChart();
+}
+
+function refreshCharts() {
+    if (state.issues.length === 0) {
+        showToast('Load log files to see analytics', 'info');
+        return;
+    }
+    updateAnalytics();
+    showToast('Charts refreshed', 'success');
+}
