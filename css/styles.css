@@ -807,7 +807,8 @@ body {
     color: var(--text-tertiary);
     text-align: right;
     user-select: none;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .line-number {
@@ -2706,10 +2707,11 @@ body {
     height: 100vh !important;
     z-index: 9999 !important;
     background: var(--bg-primary) !important;
-    padding: 1rem !important;
+    padding: 0.5rem !important;
     margin: 0 !important;
-    overflow: auto !important;
-    display: block !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
 }
 
 /* Hide the page header in fullscreen */
@@ -2726,21 +2728,26 @@ body {
 /* Reduce spacing in fullscreen */
 #page-viewer.fullscreen-mode .viewer-toolbar {
     margin-bottom: 0.5rem !important;
+    flex-shrink: 0 !important;
 }
 
 #page-viewer.fullscreen-mode .search-filter-bar {
     margin-bottom: 0.5rem !important;
     padding: 0.75rem !important;
+    flex-shrink: 0 !important;
 }
 
 /* Make the log container fill available space - JS will set precise height */
 #page-viewer.fullscreen-mode .log-container {
-    flex: 1 !important;
-    /* Height will be set dynamically by JavaScript */
+    flex: 1 1 auto !important;
+    overflow: hidden !important;
+    min-height: 0 !important;
 }
 
 #page-viewer.fullscreen-mode .viewer-footer {
     margin-top: 0.5rem !important;
+    margin-bottom: 0 !important;
+    flex-shrink: 0 !important;
 }
 
 #page-viewer.fullscreen-mode .stitch-legend {
@@ -2753,17 +2760,81 @@ body:has(#page-viewer.fullscreen-mode) {
 }
 
 /* Active state for fullscreen button */
-#fullscreenToggle.active {
+#fullscreenToggle.active,
+#compareFullscreenToggle.active {
     background: var(--accent-primary) !important;
     color: white !important;
 }
 
-#fullscreenToggle.active svg {
+#fullscreenToggle.active svg,
+#compareFullscreenToggle.active svg {
     color: white !important;
 }
 
 /* Fullscreen button animation */
-#fullscreenToggle:hover svg {
+#fullscreenToggle:hover svg,
+#compareFullscreenToggle:hover svg {
     transform: scale(1.1);
     transition: transform var(--transition-fast);
+}
+
+/* ============================================
+   Compare Page Fullscreen Mode
+   ============================================ */
+
+/* When fullscreen mode is active on compare page, make it fill the viewport and hide sidebar */
+#page-compare.fullscreen-mode {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 9999 !important;
+    background: var(--bg-primary) !important;
+    padding: 0.5rem !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+/* Hide the page header in fullscreen */
+#page-compare.fullscreen-mode .page-header {
+    display: none !important;
+}
+
+/* Reduce spacing in fullscreen */
+#page-compare.fullscreen-mode .compare-toolbar {
+    margin-bottom: 0.5rem !important;
+    flex-shrink: 0 !important;
+}
+
+/* Make the compare container fill available space */
+#page-compare.fullscreen-mode .compare-container {
+    flex: 1 1 auto !important;
+    overflow: auto !important;
+    min-height: 0 !important;
+}
+
+/* Hide time sync info panel or make it compact */
+#page-compare.fullscreen-mode .time-sync-info {
+    margin: 0.5rem 0 !important;
+    flex-shrink: 0 !important;
+}
+
+/* Make compare columns use full width */
+#page-compare.fullscreen-mode .compare-column {
+    min-width: 0 !important;
+}
+
+/* Prevent body scrolling when in fullscreen */
+body:has(#page-compare.fullscreen-mode) {
+    overflow: hidden !important;
+}
+
+/* Hide the sidebar when compare page is in fullscreen */
+body:has(#page-compare.fullscreen-mode) .nav-sidebar {
+    display: none !important;
 }

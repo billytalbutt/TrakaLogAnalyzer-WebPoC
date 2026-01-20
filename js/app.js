@@ -121,6 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initSettings();
     loadSettings();
     updateUI();
+    initScrollSync(); // Initialize scroll synchronization for line numbers
 });
 
 // ============================================
@@ -2600,40 +2601,112 @@ function adjustFullscreenLogHeight() {
         return;
     }
     
-    // Calculate heights of other elements
-    const toolbar = document.querySelector('.viewer-toolbar');
-    const searchBar = document.querySelector('.search-filter-bar');
-    const stitchPanel = document.getElementById('stitchPanel');
-    const footer = document.querySelector('.viewer-footer');
-    const legend = document.getElementById('stitchLegend');
+    // With flexbox layout, we don't need to manually calculate height
+    // But we can ensure scrolling works properly
+    const logContent = logContainer.querySelector('.log-content');
+    const logGutter = logContainer.querySelector('.log-gutter');
     
-    let usedHeight = 32; // Base padding (1rem top + 1rem bottom)
-    
-    if (toolbar) usedHeight += toolbar.offsetHeight + 8; // 8px margin
-    if (searchBar) usedHeight += searchBar.offsetHeight + 8;
-    if (stitchPanel && stitchPanel.style.display !== 'none') {
-        usedHeight += stitchPanel.offsetHeight + 16;
+    if (logContent) {
+        logContent.style.height = '100%';
     }
-    if (footer) usedHeight += footer.offsetHeight + 8;
-    if (legend && legend.style.display !== 'none') {
-        usedHeight += legend.offsetHeight + 8;
+    if (logGutter) {
+        logGutter.style.height = '100%';
     }
-    
-    const availableHeight = window.innerHeight - usedHeight;
-    logContainer.style.height = `${availableHeight}px`;
-    logContainer.style.maxHeight = `${availableHeight}px`;
-    logContainer.style.minHeight = `${availableHeight}px`;
 }
 
 // Add keyboard shortcut for fullscreen (ESC to exit)
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         const viewerPage = document.getElementById('page-viewer');
+        const comparePage = document.getElementById('page-compare');
+        
         if (viewerPage && viewerPage.classList.contains('fullscreen-mode')) {
             toggleLogViewerFullscreen();
+        } else if (comparePage && comparePage.classList.contains('fullscreen-mode')) {
+            toggleCompareFullscreen();
         }
     }
 });
+
+// ============================================
+// Scroll Synchronization for Line Numbers
+// ============================================
+function initScrollSync() {
+    const logContent = document.getElementById('logContent');
+    const logGutter = document.getElementById('logGutter');
+    
+    if (!logContent || !logGutter) return;
+    
+    let isSyncingGutter = false;
+    let isSyncingContent = false;
+    
+    // Sync gutter when content scrolls
+    logContent.addEventListener('scroll', () => {
+        if (isSyncingContent) {
+            isSyncingContent = false;
+            return;
+        }
+        isSyncingGutter = true;
+        logGutter.scrollTop = logContent.scrollTop;
+    });
+    
+    // Sync content when gutter scrolls (for users who scroll on the line numbers)
+    logGutter.addEventListener('scroll', () => {
+        if (isSyncingGutter) {
+            isSyncingGutter = false;
+            return;
+        }
+        isSyncingContent = true;
+        logContent.scrollTop = logGutter.scrollTop;
+    });
+}
+
+// ============================================
+// Compare Page Fullscreen Mode
+// ============================================
+function toggleCompareFullscreen() {
+    const comparePage = document.getElementById('page-compare');
+    const fullscreenBtn = document.getElementById('compareFullscreenToggle');
+    const navSidebar = document.querySelector('.nav-sidebar');
+    
+    if (!comparePage) return;
+    
+    if (comparePage.classList.contains('fullscreen-mode')) {
+        // Exit fullscreen
+        comparePage.classList.remove('fullscreen-mode');
+        document.body.classList.remove('fullscreen-active');
+        if (navSidebar) navSidebar.style.display = '';
+        fullscreenBtn.classList.remove('active');
+        fullscreenBtn.title = 'Toggle fullscreen mode';
+        
+        // Update the SVG to "expand" icon
+        fullscreenBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+            </svg>
+            Fullscreen
+        `;
+        
+        showToast('Exited fullscreen mode', 'info');
+    } else {
+        // Enter fullscreen
+        comparePage.classList.add('fullscreen-mode');
+        document.body.classList.add('fullscreen-active');
+        if (navSidebar) navSidebar.style.display = 'none';
+        fullscreenBtn.classList.add('active');
+        fullscreenBtn.title = 'Exit fullscreen mode (ESC)';
+        
+        // Update the SVG to "minimize" icon
+        fullscreenBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
+            </svg>
+            Exit Fullscreen
+        `;
+        
+        showToast('Fullscreen mode enabled (press ESC to exit)', 'success');
+    }
+}
 
 // ============================================
 // Utility Functions
