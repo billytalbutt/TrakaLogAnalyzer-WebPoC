@@ -21,11 +21,19 @@ const state = {
     liveTailFileHandles: new Map(), // Store file handles for live monitoring
     lastReadPositions: new Map(), // Track last read position per file
     autoScrollEnabled: true,
+    timeSyncActive: false,
+    timeSyncRange: 5000, // 5 seconds in milliseconds (adjustable)
+    timeSyncProcessing: false, // Track if toggle is processing
+    stitchMode: false,
+    stitchedFiles: [], // Files selected for stitching
+    stitchedData: null, // Merged log data
+    dateSortOrder: 'none', // Date sorting: 'none', 'asc', 'desc'
     engineFilters: {
         business: false,
         comms: false,
         integration: false
     },
+    filterDebounceTimer: null, // Debounce timer for filter changes
     settings: {
         detectErrors: true,
         detectExceptions: true,
@@ -175,6 +183,9 @@ function initFileDropZone() {
     fileInput.addEventListener('change', (e) => {
         handleFiles(e.target.files);
     });
+    
+    // Initialize compare page drop zone
+    initCompareDropZone();
 }
 
 function initFileInputs() {
@@ -182,36 +193,126 @@ function initFileInputs() {
     const compareInput = document.getElementById('compareFileInput');
     
     if (viewerInput) {
-        viewerInput.addEventListener('change', (e) => handleFiles(e.target.files));
+        viewerInput.addEventListener('change', (e) => handleFiles(e.target.files, false, false));
     }
     
     if (compareInput) {
-        compareInput.addEventListener('change', (e) => handleFiles(e.target.files));
+        // Compare page file input - stay on compare, sort intelligently
+        compareInput.addEventListener('change', (e) => handleFiles(e.target.files, true, true));
     }
 }
 
-function handleFiles(files) {
-    Array.from(files).forEach(file => {
-        if (file.name.endsWith('.log') || file.name.endsWith('.txt')) {
-            loadFile(file);
+function handleFiles(files, sortIntelligently = false, skipNavigation = false) {
+    const validFiles = Array.from(files).filter(file => {
+        if (file.name.endsWith('.log') || file.name.endsWith('.txt') || file.name.endsWith('.cfg')) {
+            return true;
         } else {
-            showToast(`Skipped ${file.name} - only .log and .txt files supported`, 'warning');
+            showToast(`Skipped ${file.name} - only .log, .txt, and .cfg files supported`, 'warning');
+            return false;
         }
     });
+    
+    if (validFiles.length === 0) return;
+    
+    if (sortIntelligently && validFiles.length > 1) {
+        // Sort files intelligently: Business → Comms → Integration → Plugins
+        validFiles.sort((a, b) => {
+            const orderA = getFileOrder(a.name);
+            const orderB = getFileOrder(b.name);
+            return orderA - orderB;
+        });
+    }
+    
+    // Show initial loading message for multiple files
+    if (validFiles.length > 1) {
+        showToast(`Loading ${validFiles.length} files...`, 'info');
+    }
+    
+    // Load all files (pass skipNavigation to each, suppress individual toasts)
+    const suppressToast = validFiles.length > 1;
+    validFiles.forEach(file => loadFile(file, skipNavigation, suppressToast));
+    
+    // Show completion message after all files loaded
+    if (validFiles.length > 1) {
+        setTimeout(() => {
+            if (sortIntelligently) {
+                const fileTypes = validFiles.map(f => detectEngineType(f.name));
+                showToast(`✓ Loaded ${validFiles.length} files: ${fileTypes.join(' → ')}`, 'success');
+            } else {
+                showToast(`✓ Successfully loaded ${validFiles.length} files`, 'success');
+            }
+        }, 500);
+    }
 }
 
-function loadFile(file) {
+function getFileOrder(filename) {
+    const lower = filename.toLowerCase();
+    
+    // Business Engine - highest priority (1)
+    if (lower.includes('business') || lower.includes('businessengine') || 
+        lower.includes('business-engine') || lower.includes('business_engine')) {
+        return 1;
+    }
+    
+    // Comms Engine - second priority (2)
+    if (lower.includes('comms') || lower.includes('commsengine') || 
+        lower.includes('comms-engine') || lower.includes('comms_engine') ||
+        lower.includes('communication')) {
+        return 2;
+    }
+    
+    // Integration Engine - third priority (3)
+    if (lower.includes('integration') || lower.includes('integrationengine') || 
+        lower.includes('integration-engine') || lower.includes('integration_engine')) {
+        return 3;
+    }
+    
+    // Plugin/Integration logs - lowest priority (4+)
+    // CCure, Lenel, OnGuard, etc.
+    if (lower.includes('ccure') || lower.includes('lenel') || lower.includes('onguard') ||
+        lower.includes('plugin') || lower.includes('symmetry') || lower.includes('secure')) {
+        return 4;
+    }
+    
+    // Config files - after plugins (5)
+    if (lower.endsWith('.cfg')) {
+        return 5;
+    }
+    
+    // Unknown files - last (6)
+    return 6;
+}
+
+function detectEngineType(filename) {
+    const lower = filename.toLowerCase();
+    
+    if (lower.includes('business')) return 'Business Engine';
+    if (lower.includes('comms')) return 'Comms Engine';
+    if (lower.includes('integration')) return 'Integration Engine';
+    if (lower.includes('ccure')) return 'CCure Plugin';
+    if (lower.includes('lenel')) return 'Lenel Plugin';
+    if (lower.includes('onguard')) return 'OnGuard Plugin';
+    if (lower.includes('symmetry')) return 'Symmetry Plugin';
+    if (lower.includes('secure')) return 'Secure Plugin';
+    if (lower.endsWith('.cfg')) return 'Config';
+    
+    return 'Log File';
+}
+
+function loadFile(file, skipNavigation = false, suppressToast = false) {
     const reader = new FileReader();
     
     reader.onload = (e) => {
         const content = e.target.result;
+        const isConfig = file.name.endsWith('.cfg');
         const fileData = {
             name: file.name,
             size: file.size,
             lastModified: new Date(file.lastModified),
             content: content,
             lines: content.split('\n'),
-            fileHandle: file // Store original File object for live monitoring
+            fileHandle: file, // Store original File object for live monitoring
+            isConfig: isConfig // Flag to identify config files
         };
         
         // Check if file already loaded
@@ -225,9 +326,11 @@ function loadFile(file) {
         // Initialize last read position for live tail
         state.lastReadPositions.set(file.name, content.length);
         
-        // Parse and analyze
+        // Parse and analyze (skip issue detection for config files)
         parseLogFile(fileData);
-        detectIssues(fileData);
+        if (!isConfig) {
+            detectIssues(fileData);
+        }
         
         // Update UI
         updateUI();
@@ -235,16 +338,22 @@ function loadFile(file) {
         updateFilesList();
         updateCompareView();
         
-        // Auto-select first file
-        if (state.currentFileIndex === -1) {
+        // Auto-select first file only if we're not skipping navigation
+        if (!skipNavigation && state.currentFileIndex === -1) {
             state.currentFileIndex = 0;
             displayLog(state.files[0]);
         }
         
-        // Navigate to viewer for better UX
-        navigateTo('viewer');
+        // Navigate to viewer for better UX - but NOT if skipNavigation is true
+        if (!skipNavigation) {
+            navigateTo('viewer');
+        }
         
-        showToast(`Loaded ${file.name} (${formatFileSize(file.size)})`, 'success');
+        // Show individual toast only if not suppressed (for batch loading)
+        if (!suppressToast) {
+            const fileType = isConfig ? 'config file' : 'log file';
+            showToast(`Loaded ${file.name} as ${fileType} (${formatFileSize(file.size)})`, 'success');
+        }
     };
     
     reader.onerror = () => {
@@ -395,27 +504,94 @@ function displayLog(fileData) {
     }
     
     const parsed = state.parsedLogs.get(fileData.name) || [];
-    const filteredLines = filterLines(parsed);
+    let filteredLines = filterLines(parsed);
     
-    // Build gutter
+    // Apply date sorting if enabled
+    filteredLines = sortLogLinesByDate(filteredLines);
+    
+    // Performance optimization: Show loading for large files
+    if (filteredLines.length > 5000) {
+        content.innerHTML = `
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="spin-animation">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                <p>Rendering large log file...</p>
+                <span>${filteredLines.length.toLocaleString()} lines</span>
+            </div>
+        `;
+        
+        // Defer rendering to prevent UI blocking (reduced to 50ms for faster response)
+        setTimeout(() => renderLogOptimized(fileData, filteredLines, gutter, content), 50);
+    } else {
+        renderLogOptimized(fileData, filteredLines, gutter, content);
+    }
+}
+
+function renderLogOptimized(fileData, filteredLines, gutter, content) {
+    // Build gutter using DocumentFragment
     if (state.settings.showLineNumbers) {
-        gutter.innerHTML = filteredLines.map(entry => 
+        const gutterFragment = document.createDocumentFragment();
+        const gutterDiv = document.createElement('div');
+        gutterDiv.innerHTML = filteredLines.map(entry => 
             `<div class="line-number" data-line="${entry.lineNumber}">${entry.lineNumber}</div>`
         ).join('');
+        
+        while (gutterDiv.firstChild) {
+            gutterFragment.appendChild(gutterDiv.firstChild);
+        }
+        
+        gutter.innerHTML = '';
+        gutter.appendChild(gutterFragment);
         gutter.style.display = 'block';
     } else {
         gutter.style.display = 'none';
     }
     
     // Build content
-    content.innerHTML = filteredLines.map(entry => {
-        const levelClass = entry.level !== 'default' ? entry.level : '';
-        const highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
-            ? highlightSearchTerms(escapeHtml(entry.raw))
-            : escapeHtml(entry.raw);
-        
-        return `<div class="log-line ${levelClass}" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
-    }).join('');
+    const contentFragment = document.createDocumentFragment();
+    const contentDiv = document.createElement('div');
+    
+    if (fileData.isConfig) {
+        // Config file display with syntax highlighting
+        contentDiv.innerHTML = filteredLines.map(entry => {
+            let highlightedLine = escapeHtml(entry.raw);
+            
+            if (entry.raw.trim().startsWith('[') && entry.raw.trim().endsWith(']')) {
+                highlightedLine = `<span style="color: var(--accent-primary); font-weight: 600;">${highlightedLine}</span>`;
+            } else if (entry.raw.trim().startsWith('#') || entry.raw.trim().startsWith(';')) {
+                highlightedLine = `<span style="color: var(--text-tertiary); font-style: italic;">${highlightedLine}</span>`;
+            } else if (entry.raw.includes('=')) {
+                const parts = entry.raw.split('=');
+                if (parts.length >= 2) {
+                    const key = escapeHtml(parts[0]);
+                    const value = escapeHtml(parts.slice(1).join('='));
+                    highlightedLine = `<span style="color: var(--accent-secondary);">${key}</span>=<span style="color: var(--text-primary);">${value}</span>`;
+                }
+            }
+            
+            return `<div class="log-line config-line" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
+        }).join('');
+    } else {
+        // Regular log file display
+        contentDiv.innerHTML = filteredLines.map(entry => {
+            const levelClass = entry.level !== 'default' ? entry.level : '';
+            const highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
+                ? highlightSearchTerms(escapeHtml(entry.raw))
+                : escapeHtml(entry.raw);
+            
+            return `<div class="log-line ${levelClass}" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
+        }).join('');
+    }
+    
+    while (contentDiv.firstChild) {
+        contentFragment.appendChild(contentDiv.firstChild);
+    }
+    
+    content.innerHTML = '';
+    content.appendChild(contentFragment);
     
     // Update stats
     updateViewerStats(fileData, filteredLines.length);
@@ -429,73 +605,68 @@ function displayLog(fileData) {
 }
 
 function filterLines(parsed) {
-    let filtered = parsed;
-    
-    // Level filter
-    if (state.activeFilter !== 'all') {
-        filtered = filtered.filter(entry => entry.level === state.activeFilter);
-    }
-    
-    // Engine filter - using ACCURATE patterns based on real Traka log format
+    // Pre-calculate filter conditions once
+    const hasLevelFilter = state.activeFilter !== 'all';
     const hasActiveEngineFilter = Object.values(state.engineFilters).some(v => v);
-    if (hasActiveEngineFilter) {
-        filtered = filtered.filter(entry => {
-            const line = entry.raw;
-            
-            // Check if line matches any active engine filter
-            if (state.engineFilters.comms) {
-                // Comms Engine Manager patterns
-                if (/\bcenmgr:/i.test(line) ||
-                    /\bcomms engine on\b/i.test(line) ||
-                    /\bce-comms engine\b/i.test(line) ||
-                    /\bce ['"]comms engine/i.test(line) ||
-                    /\bcem comms channel\b/i.test(line)) {
-                    return true;
-                }
-            }
-            
-            if (state.engineFilters.integration) {
-                // Integration Engine Manager patterns
-                if (/\bienmgr:/i.test(line) ||
-                    /\bintegration engine on\b/i.test(line) ||
-                    /\bie-integration engine\b/i.test(line) ||
-                    /\bcreating ie manager\b/i.test(line)) {
-                    return true;
-                }
-            }
-            
-            if (state.engineFilters.business) {
-                // Business Engine specific patterns (module prefixes and messages)
-                if (/\bbesvch:/i.test(line) ||
-                    /\benghlp:/i.test(line) ||
-                    /\bdbintg:/i.test(line) ||
-                    /\bdbhlp:/i.test(line) ||
-                    /\bjobpro:/i.test(line) ||
-                    /\bsvcmgr:/i.test(line) ||
-                    /\baccpro:/i.test(line) ||
-                    /\btraka business engine (started|stopped|v\d)/i.test(line) ||
-                    /\bbusiness engine database/i.test(line)) {
-                    return true;
-                }
-            }
-            
-            return false; // Doesn't match any active filter
-        });
-    }
     
-    // Date filter
     const dateFrom = document.getElementById('dateFrom')?.value;
     const dateTo = document.getElementById('dateTo')?.value;
+    const hasDateFilter = dateFrom || dateTo;
     
-    if (dateFrom || dateTo) {
-        filtered = filtered.filter(entry => {
-            if (!entry.timestamp) return true;
-            const entryDate = new Date(entry.timestamp);
-            if (dateFrom && entryDate < new Date(dateFrom)) return false;
-            if (dateTo && entryDate > new Date(dateTo)) return false;
-            return true;
-        });
+    const dateFromObj = dateFrom ? new Date(dateFrom) : null;
+    const dateToObj = dateTo ? new Date(dateTo) : null;
+    
+    // Pre-compile regex patterns for engine filters if needed
+    let commsPattern = null;
+    let integrationPattern = null;
+    let businessPattern = null;
+    
+    if (hasActiveEngineFilter) {
+        if (state.engineFilters.comms) {
+            commsPattern = /\bcenmgr:|comms engine on\b|ce-comms engine|ce ['"]comms engine|cem comms channel/i;
+        }
+        if (state.engineFilters.integration) {
+            integrationPattern = /\bienmgr:|integration engine on\b|ie-integration engine|creating ie manager/i;
+        }
+        if (state.engineFilters.business) {
+            businessPattern = /\bbesvch:|enghlp:|dbintg:|dbhlp:|jobpro:|svcmgr:|accpro:|traka business engine (started|stopped|v\d)|business engine database/i;
+        }
     }
+    
+    // Single-pass filter - check all conditions at once
+    const filtered = parsed.filter(entry => {
+        // Level filter
+        if (hasLevelFilter && entry.level !== state.activeFilter) {
+            return false;
+        }
+        
+        // Engine filter
+        if (hasActiveEngineFilter) {
+            const line = entry.raw;
+            let matchesEngine = false;
+            
+            if (commsPattern && commsPattern.test(line)) {
+                matchesEngine = true;
+            } else if (integrationPattern && integrationPattern.test(line)) {
+                matchesEngine = true;
+            } else if (businessPattern && businessPattern.test(line)) {
+                matchesEngine = true;
+            }
+            
+            if (!matchesEngine) {
+                return false;
+            }
+        }
+        
+        // Date filter
+        if (hasDateFilter && entry.timestamp) {
+            const entryDate = new Date(entry.timestamp);
+            if (dateFromObj && entryDate < dateFromObj) return false;
+            if (dateToObj && entryDate > dateToObj) return false;
+        }
+        
+        return true;
+    });
     
     return filtered;
 }
@@ -709,15 +880,21 @@ function initFilters() {
     
     // Date filter changes
     document.getElementById('dateFrom')?.addEventListener('change', () => {
-        if (state.currentFileIndex >= 0) {
-            displayLog(state.files[state.currentFileIndex]);
-        }
+        if (state.filterDebounceTimer) clearTimeout(state.filterDebounceTimer);
+        state.filterDebounceTimer = setTimeout(() => {
+            if (state.currentFileIndex >= 0) {
+                displayLog(state.files[state.currentFileIndex]);
+            }
+        }, 200);
     });
     
     document.getElementById('dateTo')?.addEventListener('change', () => {
-        if (state.currentFileIndex >= 0) {
-            displayLog(state.files[state.currentFileIndex]);
-        }
+        if (state.filterDebounceTimer) clearTimeout(state.filterDebounceTimer);
+        state.filterDebounceTimer = setTimeout(() => {
+            if (state.currentFileIndex >= 0) {
+                displayLog(state.files[state.currentFileIndex]);
+            }
+        }, 200);
     });
 }
 
@@ -730,10 +907,16 @@ function toggleEngineFilter(engine) {
         btn.classList.toggle('active', state.engineFilters[engine]);
     }
     
-    // Refresh display
-    if (state.currentFileIndex >= 0) {
-        displayLog(state.files[state.currentFileIndex]);
+    // Debounced refresh display - wait for user to finish clicking
+    if (state.filterDebounceTimer) {
+        clearTimeout(state.filterDebounceTimer);
     }
+    
+    state.filterDebounceTimer = setTimeout(() => {
+        if (state.currentFileIndex >= 0) {
+            displayLog(state.files[state.currentFileIndex]);
+        }
+    }, 150); // Wait 150ms after last filter change
     
     // Show feedback
     const activeEngines = Object.entries(state.engineFilters)
@@ -759,27 +942,73 @@ function clearDateFilter() {
 // ============================================
 // Compare View
 // ============================================
+function initCompareDropZone() {
+    const dropZone = document.getElementById('compareDropZone');
+    
+    if (!dropZone) return;
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', (e) => {
+        // Only remove if leaving the drop zone entirely
+        if (e.target === dropZone) {
+            dropZone.classList.remove('dragover');
+        }
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        
+        // Handle files with intelligent sorting and STAY ON COMPARE PAGE
+        handleFiles(e.dataTransfer.files, true, true);
+        
+        // No navigation - we're already on compare and want to stay here!
+    });
+}
+
 function updateCompareView() {
     const container = document.getElementById('compareContainer');
     
     if (state.files.length < 1) {
         container.innerHTML = `
-            <div class="compare-empty">
+            <div class="compare-empty" id="compareDropZone">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <rect x="3" y="3" width="7" height="18" rx="1"></rect>
-                    <rect x="14" y="3" width="7" height="18" rx="1"></rect>
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
-                <p>No logs loaded for comparison</p>
-                <span>Load two or more log files to compare them side by side (supports up to 6 files in grid view)</span>
+                <p class="drop-title">Drag & Drop Multiple Logs Here</p>
+                <span class="drop-instruction">Drop Business, Comms, Integration, and Plugin logs</span>
+                <span class="drop-hint">Files will be automatically sorted: Business → Comms → Integration → Plugins</span>
+                <button class="btn btn-secondary" onclick="document.getElementById('compareFileInput').click()" style="margin-top: 1rem;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Or Browse Files
+                </button>
             </div>
         `;
+        
+        // Re-initialize drop zone after updating HTML
+        initCompareDropZone();
         return;
     }
     
     // Set data attribute for grid layout
     container.setAttribute('data-file-count', state.files.length);
     
-    container.innerHTML = state.files.map((file, index) => `
+    container.innerHTML = state.files.map((file, index) => {
+        const fileTypeBadge = file.isConfig 
+            ? '<span class="file-type-badge config" style="margin-left: 0.5rem;">CONFIG</span>' 
+            : '';
+        
+        return `
         <div class="compare-panel" data-index="${index}">
             <div class="compare-panel-header">
                 <h4>
@@ -787,7 +1016,7 @@ function updateCompareView() {
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                         <polyline points="14 2 14 8 20 8"></polyline>
                     </svg>
-                    ${escapeHtml(file.name)}
+                    ${escapeHtml(file.name)}${fileTypeBadge}
                 </h4>
                 <div class="file-badge">${file.lines.length.toLocaleString()} lines</div>
                 <button class="btn-icon" onclick="removeFile(${index})" title="Remove file">
@@ -801,11 +1030,16 @@ function updateCompareView() {
                 ${file.lines.map((line, lineIdx) => {
                     const level = detectLogLevel(line);
                     const levelClass = level !== 'default' ? level : '';
-                    return `<div class="log-line ${levelClass}" data-line="${lineIdx + 1}">${escapeHtml(line) || '&nbsp;'}</div>`;
+                    const timestamp = extractTimestamp(line);
+                    const timestampAttr = timestamp ? `data-timestamp="${timestamp}"` : '';
+                    const clickHandler = state.timeSyncActive && timestamp ? `onclick="syncToTimestamp('${timestamp}', ${index}, ${lineIdx + 1})"` : '';
+                    const cursorStyle = state.timeSyncActive && timestamp ? 'cursor: pointer;' : '';
+                    return `<div class="log-line ${levelClass}" data-line="${lineIdx + 1}" data-file-index="${index}" ${timestampAttr} ${clickHandler} style="${cursorStyle}">${escapeHtml(line) || '&nbsp;'}</div>`;
                 }).join('')}
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function handleCompareScroll(event, sourceIndex) {
@@ -1644,7 +1878,12 @@ function updateFileDropdown() {
 function updateFilesList() {
     const container = document.getElementById('filesList');
     
-    container.innerHTML = state.files.map((file, index) => `
+    container.innerHTML = state.files.map((file, index) => {
+        const fileTypeBadge = file.isConfig 
+            ? '<span class="file-type-badge config">CONFIG</span>' 
+            : '<span class="file-type-badge log">LOG</span>';
+        
+        return `
         <div class="file-item">
             <div class="file-info">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1652,7 +1891,7 @@ function updateFilesList() {
                     <polyline points="14 2 14 8 20 8"></polyline>
                 </svg>
                 <div>
-                    <div class="file-name">${escapeHtml(file.name)}</div>
+                    <div class="file-name">${escapeHtml(file.name)} ${fileTypeBadge}</div>
                     <div class="file-meta">${file.lines.length.toLocaleString()} lines · ${formatFileSize(file.size)}</div>
                 </div>
             </div>
@@ -1666,7 +1905,8 @@ function updateFilesList() {
                 </button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function viewFile(index) {
@@ -1730,6 +1970,670 @@ function showToast(message, type = 'info') {
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
+
+// ============================================
+// Log File Stitching Feature
+// ============================================
+function toggleStitchMode() {
+    state.stitchMode = !state.stitchMode;
+    const panel = document.getElementById('stitchPanel');
+    const btn = document.getElementById('stitchModeBtn');
+    
+    if (state.stitchMode) {
+        panel.style.display = 'block';
+        btn.classList.add('active');
+        populateStitchFileList();
+        showToast('Select files to stitch together', 'info');
+    } else {
+        panel.style.display = 'none';
+        btn.classList.remove('active');
+        state.stitchedFiles = [];
+    }
+}
+
+function populateStitchFileList() {
+    const container = document.getElementById('stitchFileList');
+    
+    if (state.files.length === 0) {
+        container.innerHTML = '<p class="empty-message">No files loaded. Load files first.</p>';
+        return;
+    }
+    
+    // Filter out config files and already stitched files
+    const logFiles = state.files.filter(f => !f.isConfig && !f.isStitched);
+    
+    if (logFiles.length === 0) {
+        container.innerHTML = '<p class="empty-message">No log files available for stitching. Config and stitched files cannot be stitched.</p>';
+        return;
+    }
+    
+    // Group files by type (Business Engine, Comms Engine, etc.)
+    const grouped = groupFilesByType(logFiles);
+    
+    let html = '';
+    for (const [type, files] of Object.entries(grouped)) {
+        html += `
+            <div class="stitch-group">
+                <h4>${type}</h4>
+                ${files.map(file => `
+                    <label class="stitch-file-item">
+                        <input type="checkbox" 
+                               value="${escapeHtml(file.name)}" 
+                               onchange="updateStitchSelection()">
+                        <span class="file-name">${escapeHtml(file.name)}</span>
+                        <span class="file-info">${file.lines.length.toLocaleString()} lines | ${formatFileSize(file.size)}</span>
+                    </label>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
+}
+
+function groupFilesByType(files) {
+    const groups = {
+        'Business Engine': [],
+        'Comms Engine': [],
+        'Integration Engine': [],
+        'Plugins': [],
+        'Other Logs': []
+    };
+    
+    files.forEach(file => {
+        const lower = file.name.toLowerCase();
+        if (lower.includes('business')) {
+            groups['Business Engine'].push(file);
+        } else if (lower.includes('comms')) {
+            groups['Comms Engine'].push(file);
+        } else if (lower.includes('integration')) {
+            groups['Integration Engine'].push(file);
+        } else if (lower.includes('ccure') || lower.includes('lenel') || lower.includes('onguard') || 
+                   lower.includes('symmetry') || lower.includes('plugin')) {
+            groups['Plugins'].push(file);
+        } else {
+            groups['Other Logs'].push(file);
+        }
+    });
+    
+    // Remove empty groups
+    return Object.fromEntries(
+        Object.entries(groups).filter(([_, files]) => files.length > 0)
+    );
+}
+
+function updateStitchSelection() {
+    const checkboxes = document.querySelectorAll('#stitchFileList input[type="checkbox"]');
+    state.stitchedFiles = Array.from(checkboxes)
+        .filter(cb => cb.checked)
+        .map(cb => cb.value);
+    
+    const btn = document.getElementById('performStitchBtn');
+    const exportBtn = document.getElementById('exportStitchedBtn');
+    
+    btn.disabled = state.stitchedFiles.length < 2;
+    
+    if (state.stitchedFiles.length >= 2) {
+        btn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Stitch ${state.stitchedFiles.length} Files
+        `;
+    } else {
+        btn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Stitch Selected Files
+        `;
+    }
+    
+    // Enable export button if we have a stitched log
+    exportBtn.disabled = !state.stitchedData;
+}
+
+function performStitch() {
+    if (state.stitchedFiles.length < 2) {
+        showToast('Select at least 2 files to stitch', 'warning');
+        return;
+    }
+    
+    showToast(`Stitching ${state.stitchedFiles.length} files...`, 'info');
+    
+    // Gather all log entries from selected files
+    const allEntries = [];
+    let totalLines = 0;
+    let entriesWithTimestamps = 0;
+    let entriesWithoutTimestamps = 0;
+    
+    state.stitchedFiles.forEach(fileName => {
+        const fileData = state.files.find(f => f.name === fileName);
+        if (!fileData) return;
+        
+        const parsed = state.parsedLogs.get(fileName);
+        if (!parsed) return;
+        
+        // Add each log entry with source file info
+        parsed.forEach(entry => {
+            totalLines++;
+            if (entry.timestamp) {
+                const sortableTime = parseTimestampForStitch(entry.timestamp);
+                if (sortableTime !== null) {
+                    allEntries.push({
+                        ...entry,
+                        sourceFile: fileName,
+                        sortableTimestamp: sortableTime
+                    });
+                    entriesWithTimestamps++;
+                } else {
+                    // Timestamp exists but couldn't be parsed
+                    allEntries.push({
+                        ...entry,
+                        sourceFile: fileName,
+                        sortableTimestamp: null
+                    });
+                    entriesWithoutTimestamps++;
+                }
+            } else {
+                // No timestamp at all
+                allEntries.push({
+                    ...entry,
+                    sourceFile: fileName,
+                    sortableTimestamp: null
+                });
+                entriesWithoutTimestamps++;
+            }
+        });
+    });
+    
+    // Sort by timestamp - entries without timestamps go to the end
+    const sortedEntries = allEntries.sort((a, b) => {
+        if (!a.sortableTimestamp && !b.sortableTimestamp) return 0;
+        if (!a.sortableTimestamp) return 1;
+        if (!b.sortableTimestamp) return -1;
+        return a.sortableTimestamp - b.sortableTimestamp;
+    });
+    
+    // Create a virtual "stitched" file
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const stitchedFileName = `Stitched_${state.stitchedFiles.length}files_${dateStr}_${timeStr}.log`;
+    const stitchedContent = sortedEntries.map(entry => entry.raw).join('\n');
+    
+    state.stitchedData = {
+        name: stitchedFileName,
+        size: stitchedContent.length,
+        lastModified: new Date(),
+        content: stitchedContent,
+        lines: sortedEntries.map(e => e.raw),
+        isStitched: true,
+        sourceFiles: state.stitchedFiles.slice(), // Copy array
+        entries: sortedEntries
+    };
+    
+    // Parse the stitched data
+    state.parsedLogs.set(stitchedFileName, sortedEntries);
+    
+    // Add to files list if not already there, or replace if it exists
+    const existingIndex = state.files.findIndex(f => f.name === stitchedFileName || f.isStitched);
+    if (existingIndex >= 0) {
+        state.files[existingIndex] = state.stitchedData;
+    } else {
+        state.files.push(state.stitchedData);
+    }
+    
+    // Also detect issues in stitched log
+    detectIssues(state.stitchedData);
+    
+    // Update UI
+    updateUI();
+    updateFileDropdown();
+    
+    // Select and display stitched file
+    state.currentFileIndex = state.files.findIndex(f => f.name === stitchedFileName);
+    displayStitchedLog(state.stitchedData);
+    
+    // Enable export button
+    document.getElementById('exportStitchedBtn').disabled = false;
+    
+    // Close stitch panel
+    toggleStitchMode();
+    
+    const successMsg = entriesWithoutTimestamps > 0 
+        ? `✓ Stitched ${state.stitchedFiles.length} files (${entriesWithTimestamps.toLocaleString()} sorted by timestamp, ${entriesWithoutTimestamps.toLocaleString()} without timestamps at end)`
+        : `✓ Successfully stitched ${state.stitchedFiles.length} files with ${sortedEntries.length.toLocaleString()} log entries`;
+    
+    showToast(successMsg, 'success');
+}
+
+function parseTimestampForStitch(timestampStr) {
+    // Reuse the existing parseTimestamp function if available, otherwise implement
+    if (typeof parseTimestamp === 'function') {
+        return parseTimestamp(timestampStr);
+    }
+    
+    // Fallback implementation
+    try {
+        // Try ISO format first
+        let match = timestampStr.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+        if (match) {
+            const [, year, month, day, hour, min, sec, ms] = match;
+            return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+        }
+        
+        // Try UK format: DD/MM/YYYY HH:MM:SS
+        match = timestampStr.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+        if (match) {
+            const [, day, month, year, hour, min, sec, ms] = match;
+            return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+        }
+        
+        // Try US format: MM-DD-YYYY HH:MM:SS
+        match = timestampStr.match(/(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+        if (match) {
+            const [, month, day, year, hour, min, sec, ms] = match;
+            return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+        }
+        
+        // Try to parse as Date
+        const date = new Date(timestampStr);
+        if (!isNaN(date.getTime())) {
+            return date.getTime();
+        }
+    } catch (e) {
+        // Parsing failed
+    }
+    
+    return null;
+}
+
+function displayStitchedLog(fileData) {
+    const gutter = document.getElementById('logGutter');
+    const content = document.getElementById('logContent');
+    
+    let filtered = filterLines(fileData.entries);
+    
+    // Apply date sorting if enabled
+    filtered = sortLogLinesByDate(filtered);
+    
+    // Performance optimization: For large logs, show a loading indicator
+    if (filtered.length > 5000) {
+        content.innerHTML = `
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="spin-animation">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                <p>Rendering large stitched log...</p>
+                <span>${filtered.length.toLocaleString()} lines total</span>
+            </div>
+        `;
+        
+        // Use setTimeout to allow UI to update before rendering (reduced to 50ms)
+        setTimeout(() => renderStitchedLogOptimized(fileData, filtered, gutter, content), 50);
+    } else {
+        renderStitchedLogOptimized(fileData, filtered, gutter, content);
+    }
+}
+
+function renderStitchedLogOptimized(fileData, filtered, gutter, content) {
+    // Build gutter
+    if (state.settings.showLineNumbers) {
+        // Use DocumentFragment for better performance
+        const gutterFragment = document.createDocumentFragment();
+        const gutterDiv = document.createElement('div');
+        
+        // Batch render gutter lines
+        const gutterHTML = filtered.map((entry, idx) => 
+            `<div class="line-number" data-line="${idx + 1}">${idx + 1}</div>`
+        ).join('');
+        
+        gutterDiv.innerHTML = gutterHTML;
+        while (gutterDiv.firstChild) {
+            gutterFragment.appendChild(gutterDiv.firstChild);
+        }
+        
+        gutter.innerHTML = '';
+        gutter.appendChild(gutterFragment);
+        gutter.style.display = 'block';
+    } else {
+        gutter.style.display = 'none';
+    }
+    
+    // Build content with source file indicators using DocumentFragment
+    const contentFragment = document.createDocumentFragment();
+    const contentDiv = document.createElement('div');
+    
+    // Batch size for rendering (smaller batches = more responsive)
+    const BATCH_SIZE = 2000;
+    
+    if (filtered.length > BATCH_SIZE) {
+        // Render in batches for very large files
+        renderInBatches(filtered, contentDiv, fileData, 0, BATCH_SIZE, () => {
+            while (contentDiv.firstChild) {
+                contentFragment.appendChild(contentDiv.firstChild);
+            }
+            content.innerHTML = '';
+            content.appendChild(contentFragment);
+            
+            // Update stats and apply styling after rendering
+            finalizeStitchedLogDisplay(fileData, filtered, content, gutter);
+        });
+    } else {
+        // Render all at once for smaller files
+        const contentHTML = filtered.map((entry, idx) => {
+            const levelClass = entry.level !== 'default' ? entry.level : '';
+            const highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
+                ? highlightSearchTerms(escapeHtml(entry.raw))
+                : escapeHtml(entry.raw);
+            
+            const fileColor = getFileColor(entry.sourceFile);
+            const sourceIndicator = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
+            
+            return `<div class="log-line stitched-line ${levelClass}" data-line="${idx + 1}" data-source="${escapeHtml(entry.sourceFile)}">
+                ${sourceIndicator}${highlightedLine || '&nbsp;'}
+            </div>`;
+        }).join('');
+        
+        contentDiv.innerHTML = contentHTML;
+        while (contentDiv.firstChild) {
+            contentFragment.appendChild(contentDiv.firstChild);
+        }
+        
+        content.innerHTML = '';
+        content.appendChild(contentFragment);
+        
+        finalizeStitchedLogDisplay(fileData, filtered, content, gutter);
+    }
+}
+
+function renderInBatches(filtered, contentDiv, fileData, startIdx, batchSize, callback) {
+    const endIdx = Math.min(startIdx + batchSize, filtered.length);
+    
+    // Render this batch - use array join for better performance
+    const batchHTML = [];
+    for (let i = startIdx; i < endIdx; i++) {
+        const entry = filtered[i];
+        const levelClass = entry.level !== 'default' ? entry.level : '';
+        const highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
+            ? highlightSearchTerms(escapeHtml(entry.raw))
+            : escapeHtml(entry.raw);
+        
+        const fileColor = getFileColor(entry.sourceFile);
+        const sourceIndicator = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
+        
+        batchHTML.push(`<div class="log-line stitched-line ${levelClass}" data-line="${i + 1}" data-source="${escapeHtml(entry.sourceFile)}">${sourceIndicator}${highlightedLine || '&nbsp;'}</div>`);
+    }
+    
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = batchHTML.join('');
+    while (tempDiv.firstChild) {
+        contentDiv.appendChild(tempDiv.firstChild);
+    }
+    
+    // Continue with next batch or finish
+    if (endIdx < filtered.length) {
+        // Reduced timeout for faster rendering (1ms instead of 10ms)
+        setTimeout(() => renderInBatches(filtered, contentDiv, fileData, endIdx, batchSize, callback), 1);
+    } else {
+        callback();
+    }
+}
+
+function finalizeStitchedLogDisplay(fileData, filtered, content, gutter) {
+    // Update stats
+    const statsEl = document.getElementById('viewerStats');
+    if (statsEl) {
+        statsEl.textContent = `${fileData.name} | ${filtered.length.toLocaleString()} of ${fileData.lines.length.toLocaleString()} lines | Stitched from ${fileData.sourceFiles.length} files`;
+    }
+    
+    // Apply font size
+    content.style.fontSize = `${state.settings.fontSize}px`;
+    gutter.style.fontSize = `${state.settings.fontSize}px`;
+    
+    // Apply word wrap
+    content.style.whiteSpace = state.settings.wordWrap ? 'pre-wrap' : 'pre';
+    
+    // Show legend for source files
+    displayStitchLegend(fileData.sourceFiles);
+}
+
+function displayStitchLegend(sourceFiles) {
+    // Remove existing legend if any
+    const existing = document.getElementById('stitchLegend');
+    if (existing) existing.remove();
+    
+    const legend = document.createElement('div');
+    legend.id = 'stitchLegend';
+    legend.className = 'stitch-legend';
+    legend.innerHTML = `
+        <strong>📎 Source Files:</strong>
+        ${sourceFiles.map(fileName => {
+            const color = getFileColor(fileName);
+            return `<span class="legend-item">
+                <span class="legend-dot" style="background: ${color};"></span>
+                ${escapeHtml(fileName)}
+            </span>`;
+        }).join('')}
+    `;
+    
+    const toolbar = document.querySelector('.viewer-toolbar');
+    if (toolbar) {
+        toolbar.appendChild(legend);
+    }
+}
+
+function getFileColor(fileName) {
+    // Generate consistent colors for each file using a simple hash
+    const colors = [
+        '#FF6B35', // Orange (Traka primary)
+        '#4ECDC4', // Teal
+        '#45B7D1', // Blue
+        '#96CEB4', // Green
+        '#FFEAA7', // Yellow
+        '#A29BFE', // Purple
+        '#FD79A8', // Pink
+        '#74B9FF', // Light Blue
+        '#55EFC4', // Mint
+        '#FAB1A0'  // Coral
+    ];
+    
+    // Simple string hash
+    let hash = 0;
+    for (let i = 0; i < fileName.length; i++) {
+        hash = fileName.charCodeAt(i) + ((hash << 5) - hash);
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    
+    return colors[Math.abs(hash) % colors.length];
+}
+
+function exportStitchedLog() {
+    if (!state.stitchedData) {
+        showToast('No stitched log to export', 'warning');
+        return;
+    }
+    
+    try {
+        const blob = new Blob([state.stitchedData.content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = state.stitchedData.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        showToast(`Exported ${state.stitchedData.name}`, 'success');
+    } catch (e) {
+        showToast(`Failed to export: ${e.message}`, 'error');
+    }
+}
+
+function selectAllStitchFiles() {
+    const checkboxes = document.querySelectorAll('#stitchFileList input[type="checkbox"]');
+    checkboxes.forEach(cb => cb.checked = true);
+    updateStitchSelection();
+    showToast(`Selected all ${checkboxes.length} files`, 'info');
+}
+
+function deselectAllStitchFiles() {
+    const checkboxes = document.querySelectorAll('#stitchFileList input[type="checkbox"]');
+    checkboxes.forEach(cb => cb.checked = false);
+    updateStitchSelection();
+    showToast('Deselected all files', 'info');
+}
+
+// ============================================
+// Date Sorting Feature
+// ============================================
+function changeDateSort() {
+    const sortOrder = document.getElementById('dateSortOrder').value;
+    state.dateSortOrder = sortOrder;
+    
+    // Re-display the current log with new sort order
+    if (state.currentFileIndex >= 0) {
+        const currentFile = state.files[state.currentFileIndex];
+        if (currentFile.isStitched) {
+            displayStitchedLog(currentFile);
+        } else {
+            displayLog(currentFile);
+        }
+    }
+    
+    // Show feedback
+    const sortLabels = {
+        'none': 'Original order',
+        'asc': 'Oldest first (ascending)',
+        'desc': 'Newest first (descending)'
+    };
+    showToast(`Sorted by date: ${sortLabels[sortOrder]}`, 'info');
+}
+
+function sortLogLinesByDate(lines) {
+    // If no sorting requested, return as-is
+    if (state.dateSortOrder === 'none') {
+        return lines;
+    }
+    
+    // Create a copy to avoid mutating original
+    const sorted = [...lines];
+    
+    // Sort by timestamp
+    sorted.sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        
+        // Handle entries without timestamps (put them at the end)
+        if (!timeA && !timeB) return 0;
+        if (!timeA) return 1;
+        if (!timeB) return -1;
+        
+        // Sort based on order
+        if (state.dateSortOrder === 'asc') {
+            return timeA - timeB; // Oldest first
+        } else {
+            return timeB - timeA; // Newest first
+        }
+    });
+    
+    return sorted;
+}
+
+// ============================================
+// Fullscreen Log Viewer Mode
+// ============================================
+function toggleLogViewerFullscreen() {
+    const viewerPage = document.getElementById('page-viewer');
+    const fullscreenBtn = document.getElementById('fullscreenToggle');
+    
+    if (!viewerPage) return;
+    
+    if (viewerPage.classList.contains('fullscreen-mode')) {
+        // Exit fullscreen
+        viewerPage.classList.remove('fullscreen-mode');
+        document.body.classList.remove('fullscreen-active');
+        fullscreenBtn.classList.remove('active');
+        fullscreenBtn.title = 'Toggle fullscreen mode';
+        
+        // Update the SVG to "expand" icon
+        fullscreenBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+            </svg>
+        `;
+        
+        showToast('Exited fullscreen mode', 'info');
+    } else {
+        // Enter fullscreen
+        viewerPage.classList.add('fullscreen-mode');
+        document.body.classList.add('fullscreen-active');
+        fullscreenBtn.classList.add('active');
+        fullscreenBtn.title = 'Exit fullscreen mode (ESC)';
+        
+        // Update the SVG to "minimize" icon
+        fullscreenBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
+            </svg>
+        `;
+        
+        showToast('Fullscreen mode enabled (press ESC to exit)', 'success');
+        
+        // Dynamically adjust log container height based on visible elements
+        setTimeout(() => {
+            adjustFullscreenLogHeight();
+        }, 50);
+    }
+}
+
+// Helper function to dynamically calculate log container height in fullscreen
+function adjustFullscreenLogHeight() {
+    const viewerPage = document.getElementById('page-viewer');
+    const logContainer = document.querySelector('.log-container');
+    
+    if (!viewerPage || !logContainer || !viewerPage.classList.contains('fullscreen-mode')) {
+        return;
+    }
+    
+    // Calculate heights of other elements
+    const toolbar = document.querySelector('.viewer-toolbar');
+    const searchBar = document.querySelector('.search-filter-bar');
+    const stitchPanel = document.getElementById('stitchPanel');
+    const footer = document.querySelector('.viewer-footer');
+    const legend = document.getElementById('stitchLegend');
+    
+    let usedHeight = 32; // Base padding (1rem top + 1rem bottom)
+    
+    if (toolbar) usedHeight += toolbar.offsetHeight + 8; // 8px margin
+    if (searchBar) usedHeight += searchBar.offsetHeight + 8;
+    if (stitchPanel && stitchPanel.style.display !== 'none') {
+        usedHeight += stitchPanel.offsetHeight + 16;
+    }
+    if (footer) usedHeight += footer.offsetHeight + 8;
+    if (legend && legend.style.display !== 'none') {
+        usedHeight += legend.offsetHeight + 8;
+    }
+    
+    const availableHeight = window.innerHeight - usedHeight;
+    logContainer.style.height = `${availableHeight}px`;
+    logContainer.style.maxHeight = `${availableHeight}px`;
+    logContainer.style.minHeight = `${availableHeight}px`;
+}
+
+// Add keyboard shortcut for fullscreen (ESC to exit)
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const viewerPage = document.getElementById('page-viewer');
+        if (viewerPage && viewerPage.classList.contains('fullscreen-mode')) {
+            toggleLogViewerFullscreen();
+        }
+    }
+});
 
 // ============================================
 // Utility Functions
@@ -2144,4 +3048,351 @@ function refreshCharts() {
     }
     updateAnalytics();
     showToast('Charts refreshed', 'success');
+}
+
+// ============================================
+// Clear All Logs Functionality
+// ============================================
+function confirmClearAllLogs() {
+    if (state.files.length === 0) {
+        showToast('No files loaded to clear', 'info');
+        return;
+    }
+    
+    // Update count in modal
+    document.getElementById('clearLogsCount').textContent = state.files.length;
+    
+    // Show confirmation modal
+    const modal = document.getElementById('clearLogsModal');
+    modal.classList.add('active');
+}
+
+function closeClearLogsModal() {
+    const modal = document.getElementById('clearLogsModal');
+    modal.classList.remove('active');
+}
+
+function clearAllLogs() {
+    // Stop live tail if active
+    if (state.liveTailActive) {
+        stopLiveTail();
+    }
+    
+    const fileCount = state.files.length;
+    
+    // Clear all state
+    state.files = [];
+    state.currentFileIndex = -1;
+    state.parsedLogs.clear();
+    state.issues = [];
+    state.searchMatches = [];
+    state.currentMatchIndex = -1;
+    state.activeFilter = 'all';
+    state.activeCategory = 'all';
+    state.lastReadPositions.clear();
+    state.liveTailFileHandles.clear();
+    state.engineFilters = {
+        business: false,
+        comms: false,
+        integration: false
+    };
+    
+    // Reset UI
+    updateUI();
+    updateFileDropdown();
+    updateFilesList();
+    updateCompareView();
+    updateIssuesUI();
+    displayLog(null);
+    
+    // Clear search
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) searchInput.value = '';
+    
+    // Clear date filters
+    const dateFrom = document.getElementById('dateFrom');
+    const dateTo = document.getElementById('dateTo');
+    if (dateFrom) dateFrom.value = '';
+    if (dateTo) dateTo.value = '';
+    
+    // Reset filter chips to 'All'
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.level === 'all');
+    });
+    
+    // Reset engine filters
+    document.querySelectorAll('.engine-filter-chip').forEach(chip => {
+        chip.classList.remove('active');
+    });
+    
+    // Close modal
+    closeClearLogsModal();
+    
+    // Navigate to home
+    navigateTo('home');
+    
+    // Show success message
+    showToast(`Successfully cleared ${fileCount} file${fileCount !== 1 ? 's' : ''} and all analysis data`, 'success');
+}
+
+// ============================================
+// Time Sync Functionality
+// ============================================
+function toggleTimeSync() {
+    // Prevent double-clicking
+    if (state.timeSyncProcessing) {
+        return;
+    }
+    
+    const btn = document.getElementById('timeSyncBtn');
+    const infoPanel = document.getElementById('timeSyncInfo');
+    
+    // Show immediate visual feedback
+    state.timeSyncProcessing = true;
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    
+    // Store original button content
+    const originalHTML = btn.innerHTML;
+    
+    if (!state.timeSyncActive) {
+        // Enabling
+        if (state.files.length < 2) {
+            showToast('Load at least 2 log files to use time sync', 'warning');
+            state.timeSyncProcessing = false;
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            return;
+        }
+        
+        btn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-animation">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            Enabling...
+        `;
+        
+        // Use setTimeout to allow UI to update
+        setTimeout(() => {
+            state.timeSyncActive = true;
+            btn.classList.add('active');
+            btn.innerHTML = originalHTML;
+            
+            if (infoPanel) {
+                infoPanel.style.display = 'block';
+                // Animate in
+                infoPanel.style.opacity = '0';
+                setTimeout(() => {
+                    infoPanel.style.opacity = '1';
+                }, 10);
+            }
+            
+            // Add click handlers to existing elements instead of rebuilding
+            enableTimeSyncHandlers();
+            
+            state.timeSyncProcessing = false;
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            
+            showToast('Time Sync enabled - Click any timestamped line', 'success');
+        }, 50);
+    } else {
+        // Disabling
+        btn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-animation">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            Disabling...
+        `;
+        
+        setTimeout(() => {
+            state.timeSyncActive = false;
+            btn.classList.remove('active');
+            btn.innerHTML = originalHTML;
+            
+            if (infoPanel) {
+                infoPanel.style.opacity = '0';
+                setTimeout(() => {
+                    infoPanel.style.display = 'none';
+                }, 200);
+            }
+            
+            // Clear highlights and remove handlers
+            clearTimeSyncHighlights();
+            disableTimeSyncHandlers();
+            
+            state.timeSyncProcessing = false;
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            
+            showToast('Time Sync disabled', 'info');
+        }, 50);
+    }
+}
+
+function enableTimeSyncHandlers() {
+    // Add click handlers to timestamped lines without rebuilding entire view
+    document.querySelectorAll('.log-line[data-timestamp]').forEach(line => {
+        const timestamp = line.getAttribute('data-timestamp');
+        const fileIndex = parseInt(line.getAttribute('data-file-index'));
+        const lineNum = parseInt(line.getAttribute('data-line'));
+        
+        if (timestamp) {
+            line.style.cursor = 'pointer';
+            line.onclick = () => syncToTimestamp(timestamp, fileIndex, lineNum);
+        }
+    });
+}
+
+function disableTimeSyncHandlers() {
+    // Remove click handlers from timestamped lines
+    document.querySelectorAll('.log-line[data-timestamp]').forEach(line => {
+        line.style.cursor = '';
+        line.onclick = null;
+    });
+}
+
+function updateTimeSyncThreshold(value) {
+    state.timeSyncRange = parseInt(value) * 1000; // Convert to milliseconds
+    const display = document.getElementById('thresholdDisplay');
+    if (display) {
+        display.textContent = `±${value} second${value > 1 ? 's' : ''}`;
+    }
+    
+    // Update preset button states
+    updatePresetButtons(parseInt(value));
+}
+
+function setTimeSyncThreshold(seconds) {
+    const slider = document.getElementById('timeSyncThreshold');
+    if (slider) {
+        slider.value = seconds;
+        updateTimeSyncThreshold(seconds);
+    }
+}
+
+function updatePresetButtons(value) {
+    document.querySelectorAll('.btn-preset').forEach(btn => {
+        const btnValue = parseInt(btn.textContent);
+        btn.classList.toggle('active', btnValue === value);
+    });
+}
+
+function syncToTimestamp(timestampStr, sourceFileIndex, sourceLine) {
+    if (!state.timeSyncActive) return;
+    
+    // Parse the timestamp
+    const targetTime = parseTimestamp(timestampStr);
+    if (!targetTime) {
+        showToast('Unable to parse timestamp from this line', 'warning');
+        return;
+    }
+    
+    // Clear previous highlights
+    clearTimeSyncHighlights();
+    
+    const rangeMs = state.timeSyncRange;
+    const minTime = targetTime - rangeMs;
+    const maxTime = targetTime + rangeMs;
+    
+    let totalHighlighted = 0;
+    
+    // Highlight matching time ranges in all files
+    document.querySelectorAll('.compare-panel').forEach((panel, panelIndex) => {
+        const lines = panel.querySelectorAll('.log-line[data-timestamp]');
+        let firstMatch = null;
+        let fileHighlightCount = 0;
+        
+        lines.forEach(line => {
+            const lineTimestamp = line.getAttribute('data-timestamp');
+            if (lineTimestamp) {
+                const lineTime = parseTimestamp(lineTimestamp);
+                if (lineTime && lineTime >= minTime && lineTime <= maxTime) {
+                    line.classList.add('time-sync-highlight');
+                    fileHighlightCount++;
+                    totalHighlighted++;
+                    
+                    if (!firstMatch) {
+                        firstMatch = line;
+                    }
+                }
+            }
+        });
+        
+        // Scroll to first match in each panel
+        if (firstMatch) {
+            const panelContent = panel.querySelector('.compare-panel-content');
+            if (panelContent) {
+                // Calculate scroll position to center the line
+                const lineTop = firstMatch.offsetTop;
+                const panelHeight = panelContent.clientHeight;
+                const scrollPos = lineTop - (panelHeight / 2);
+                panelContent.scrollTop = Math.max(0, scrollPos);
+            }
+        }
+    });
+    
+    // Update status display
+    const statusEl = document.getElementById('timeSyncStatus');
+    if (statusEl) {
+        const thresholdSeconds = state.timeSyncRange / 1000;
+        statusEl.innerHTML = `
+            <div style="padding: 0.75rem; background: var(--bg-tertiary); border-radius: var(--radius-md); border-left: 3px solid var(--accent-primary);">
+                <strong>Synced to:</strong> ${escapeHtml(timestampStr)}<br>
+                <span style="color: var(--text-tertiary); font-size: 0.875rem;">
+                    ${totalHighlighted} matching line${totalHighlighted !== 1 ? 's' : ''} found within ±${thresholdSeconds} second${thresholdSeconds !== 1 ? 's' : ''} across ${state.files.length} file${state.files.length !== 1 ? 's' : ''}
+                </span>
+            </div>
+        `;
+    }
+    
+    showToast(`Time sync: Found ${totalHighlighted} matching lines`, 'success');
+}
+
+function clearTimeSyncHighlights() {
+    document.querySelectorAll('.time-sync-highlight').forEach(line => {
+        line.classList.remove('time-sync-highlight');
+    });
+    
+    const statusEl = document.getElementById('timeSyncStatus');
+    if (statusEl) {
+        statusEl.innerHTML = '';
+    }
+}
+
+function parseTimestamp(timestampStr) {
+    // Try various timestamp formats and convert to milliseconds since epoch
+    
+    // Format: 2024-01-19 14:25:30 or 2024-01-19T14:25:30
+    let match = timestampStr.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+    if (match) {
+        const [, year, month, day, hour, min, sec, ms] = match;
+        return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+    }
+    
+    // Format: 19/01/2024 14:25:30
+    match = timestampStr.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+    if (match) {
+        const [, day, month, year, hour, min, sec, ms] = match;
+        return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+    }
+    
+    // Format: 01-19-2024 14:25:30
+    match = timestampStr.match(/(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+    if (match) {
+        const [, month, day, year, hour, min, sec, ms] = match;
+        return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+    }
+    
+    // Format: [14:25:30] (time only - use today's date)
+    match = timestampStr.match(/\[?(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?\]?/);
+    if (match) {
+        const today = new Date();
+        const [, hour, min, sec, ms] = match;
+        return new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour, min, sec, ms || 0).getTime();
+    }
+    
+    return null;
 }
