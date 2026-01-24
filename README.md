@@ -1,8 +1,30 @@
-# Traka Log Analyzer - Web PoC
+# Traka Log Analyzer - Desktop Edition v3.0
 
-A powerful log analysis tool for TrakaWEB and Traka Integration Engine log files. Part of the Traka Tools Suite.
+> **🎉 Now a Desktop Application with Automatic Log Discovery!**
+
+A powerful desktop application for analyzing TrakaWEB and Traka Integration Engine log files. Automatically scans Traka installation directories, monitors logs in real-time, and provides comprehensive analysis tools.
 
 ![Traka Log Analyzer](img/trakaweb-logo.png)
+
+## 🆕 What's New in Desktop Edition (v3.0)
+
+### Automatic Log Discovery
+- **No more browsing for files!** Click "Scan Traka Directories" to find all logs automatically
+- Scans standard Traka installation paths on your system
+- Shows file size, modification date, and full path
+- Intelligently sorts by engine type (Business → Comms → Integration)
+
+### Desktop Application Benefits
+- **No permission dialogs** - Full file system access
+- **Custom directory support** - Configure your own log locations  
+- **Real-time monitoring** - Watch directories for new files
+- **Native file picker** - Windows file dialogs
+- **Runs as installed app** - Launch from Start Menu
+
+### All Web Features Preserved
+✅ Everything from v2.1 still works perfectly!  
+✅ Same UI and workflow  
+✅ All existing features intact  
 
 ## Features
 
@@ -58,12 +80,63 @@ Detects common issues including:
 - Word wrap toggle
 - Line numbers toggle
 - Configurable tail refresh rate
+- Custom log directory paths
+- Real-time directory monitoring
+
+## Installation
+
+### Quick Start (Development Mode)
+
+1. **Install dependencies** (first time only):
+   ```bash
+   npm install
+   ```
+
+2. **Run the application**:
+   ```bash
+   npm start
+   ```
+
+The Traka Log Analyzer window will open as a desktop application.
+
+### Build Installer (For Distribution)
+
+To create a Windows installer:
+
+```bash
+npm run build:win
+```
+
+The installer will be created in the `dist/` folder. Double-click to install, then launch from the Start Menu.
 
 ## Getting Started
 
-1. Open `index.html` in a modern web browser
-2. Drag and drop log files or click to browse
-3. Use the navigation menu to:
+### Option 1: Automatic Discovery (Recommended)
+
+1. Click **"Scan Traka Directories"** on the home screen
+2. Wait while it scans standard Traka installation paths:
+   - `C:\ProgramData\Traka\Business Engine\Logs`
+   - `C:\ProgramData\Traka\Comms Engine\Logs`  
+   - `C:\ProgramData\Traka\Integration Engine\Logs`
+   - And more...
+3. Select the log files you want to analyze
+4. Click **"Load Selected Files"**
+5. Start analyzing!
+
+### Option 2: Custom Directory
+
+1. Click **"Custom Directory"**
+2. Browse to your log folder
+3. Select files from the results
+
+### Option 3: Browse Files or Drag & Drop
+
+- Click **"Browse Files"** to manually select log files
+- Or drag and drop .log/.txt files onto the drop zone
+
+## Using the Application
+
+Navigate using the sidebar menu:
    - **Home**: Overview and quick stats
    - **Log Viewer**: Detailed log analysis with live tail
    - **Compare**: Side-by-side file comparison (2-6 files)
@@ -112,12 +185,55 @@ The tool automatically detects common log formats including:
 - Standard .NET log formats
 - Custom formats with configurable patterns
 
-## Browser Compatibility
+## Configuration
 
+### Log Directory Settings
+
+Go to **Settings → Log Directory Configuration** to:
+
+1. **View default Traka paths** - See which standard directories exist on your system
+2. **Add custom directories** - Configure your own log locations
+3. **Enable auto-scan** - Automatically scan for logs when app starts
+4. **Enable directory watching** - Get notified when new log files appear
+
+### Recommended Setup
+
+For the best experience:
+1. ✅ Enable **"Automatically scan for logs on startup"**
+2. ✅ Add any custom log directories you use
+3. ✅ Save your settings
+
+Now every time you open the app, it will automatically find your latest logs!
+
+## Desktop Edition vs Web Version
+
+| Feature | Desktop Edition (v3.0) | Web Version (v2.1) |
+|---------|----------------------|-------------------|
+| Automatic log discovery | ✅ Yes | ❌ No |
+| No permission dialogs | ✅ Yes | ❌ Browser restrictions |
+| Custom directory config | ✅ Yes | ❌ No |
+| Real-time monitoring | ✅ Yes | ⚠️ Limited |
+| Installation required | ✅ Yes | ❌ No |
+| All core features | ✅ Yes | ✅ Yes |
+
+**Both versions work great!** Desktop Edition adds convenience features while preserving all functionality.
+
+## System Requirements
+
+- **Operating System**: Windows 10/11 (64-bit)
+- **RAM**: 4GB minimum, 8GB recommended
+- **Disk Space**: 200MB for application
+- **Node.js**: Not required for installed version (bundled with Electron)
+
+## Browser Compatibility (Web Version)
+
+If you prefer to run as a web app (open index.html in browser):
 - Chrome 80+
 - Firefox 75+
 - Edge 80+
 - Safari 14+
+
+**Note**: Web version won't have automatic log discovery features.
 
 ## Part of Traka Tools Suite
 

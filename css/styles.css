@@ -311,6 +311,77 @@ body {
     color: var(--text-tertiary);
 }
 
+/* Electron Auto-Discovery Section */
+.auto-discovery-section {
+    margin-bottom: 2rem;
+}
+
+.discovery-card {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(16, 185, 129, 0.1) 100%);
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+}
+
+.discovery-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.discovery-header svg {
+    width: 28px;
+    height: 28px;
+    color: var(--accent-primary);
+}
+
+.discovery-header h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.discovery-card > p {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+.discovery-actions {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.discovery-status {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    display: none;
+}
+
+/* Electron Settings - Path Lists */
+.paths-list {
+    margin-bottom: 1rem;
+}
+
+.path-item {
+    font-size: 0.875rem;
+}
+
+.path-item .btn-icon {
+    opacity: 0.6;
+}
+
+.path-item:hover .btn-icon {
+    opacity: 1;
+}
+
 /* Stats Grid */
 .stats-grid {
     display: grid;

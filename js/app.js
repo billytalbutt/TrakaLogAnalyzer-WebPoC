@@ -4,6 +4,473 @@
    ============================================ */
 
 // ============================================
+// Electron Integration (Desktop Edition)
+// ============================================
+
+// Check if running in Electron environment
+const isElectron = window.electronAPI && window.electronAPI.isElectron;
+
+// Electron-specific state
+const electronState = {
+    watchedDirectories: new Map(),
+    customLogPaths: [],
+    autoScanOnStartup: true,
+    watchDirectories: false,
+    scannedFiles: []
+};
+
+// Initialize Electron-specific features
+if (isElectron) {
+    console.log('Running in Electron mode - Desktop Edition');
+    console.log('Electron version:', window.electronAPI.version);
+    
+    // Set up file system event listeners
+    window.electronAPI.onFileAdded((data) => {
+        console.log('New file detected:', data.name);
+        showToast(`New log file detected: ${data.name}`, 'info');
+        // Optionally auto-load the file
+        if (electronState.watchDirectories) {
+            loadFileFromPath(data.path);
+        }
+    });
+    
+    window.electronAPI.onFileChanged((data) => {
+        console.log('File changed:', data.name);
+        // Optionally refresh the file if it's currently loaded
+        const existingFile = state.files.find(f => f.name === data.name);
+        if (existingFile && state.liveTailActive) {
+            // File will be updated by live tail mechanism
+        }
+    });
+    
+    window.electronAPI.onFileRemoved((data) => {
+        console.log('File removed:', data.name);
+        showToast(`Log file removed: ${data.name}`, 'warning');
+    });
+}
+
+/**
+ * Scan Traka log directories automatically
+ */
+async function scanTrakaLogs() {
+    if (!isElectron) {
+        showToast('Directory scanning is only available in Desktop Edition', 'warning');
+        return;
+    }
+    
+    const btn = document.getElementById('scanTrakaLogsBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg> Scanning...';
+    }
+    
+    try {
+        const result = await window.electronAPI.scanTrakaLogs();
+        
+        if (result.success) {
+            electronState.scannedFiles = result.files;
+            
+            if (result.files.length === 0) {
+                showToast('No log files found in Traka directories', 'warning');
+                updateDiscoveryStatus(`Scanned ${result.scannedPaths.length} directories - No log files found`);
+            } else {
+                showToast(`Found ${result.totalFiles} log files in ${result.scannedPaths.length} directories`, 'success');
+                updateDiscoveryStatus(`Found ${result.totalFiles} log files`);
+                
+                // Show file selection modal
+                showFileSelectionModal(result.files, result.scannedPaths);
+            }
+        } else {
+            showToast(`Scan failed: ${result.error}`, 'error');
+            updateDiscoveryStatus('Scan failed');
+        }
+    } catch (error) {
+        console.error('Scan error:', error);
+        showToast('Error scanning directories', 'error');
+        updateDiscoveryStatus('Error occurred');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg> Scan Traka Directories';
+        }
+    }
+}
+
+/**
+ * Select a custom directory for scanning
+ */
+async function selectCustomDirectory() {
+    if (!isElectron) {
+        showToast('Directory selection is only available in Desktop Edition', 'warning');
+        return;
+    }
+    
+    try {
+        const result = await window.electronAPI.showDirectoryPicker();
+        
+        if (result.success && result.path) {
+            const scanResult = await window.electronAPI.scanDirectory(result.path);
+            
+            if (scanResult.success) {
+                electronState.scannedFiles = scanResult.files;
+                
+                if (scanResult.files.length === 0) {
+                    showToast('No log files found in selected directory', 'warning');
+                } else {
+                    showToast(`Found ${scanResult.files.length} log files`, 'success');
+                    showFileSelectionModal(scanResult.files, [result.path]);
+                }
+            } else {
+                showToast(`Error scanning directory: ${scanResult.error}`, 'error');
+            }
+        }
+    } catch (error) {
+        console.error('Directory selection error:', error);
+        showToast('Error selecting directory', 'error');
+    }
+}
+
+/**
+ * Open Electron file picker dialog
+ */
+async function openElectronFilePicker() {
+    if (!isElectron) {
+        showToast('File picker is only available in Desktop Edition', 'warning');
+        return;
+    }
+    
+    try {
+        const result = await window.electronAPI.showFilePicker();
+        
+        if (result.success && result.paths && result.paths.length > 0) {
+            showToast(`Loading ${result.paths.length} file(s)...`, 'info');
+            
+            for (const filePath of result.paths) {
+                await loadFileFromPath(filePath);
+            }
+            
+            showToast(`Successfully loaded ${result.paths.length} file(s)`, 'success');
+        }
+    } catch (error) {
+        console.error('File picker error:', error);
+        showToast('Error loading files', 'error');
+    }
+}
+
+/**
+ * Load a file from file system path (Electron only)
+ */
+async function loadFileFromPath(filePath) {
+    if (!isElectron) return;
+    
+    try {
+        const result = await window.electronAPI.readLogFile(filePath);
+        
+        if (result.success) {
+            // Create a file-like object to use with existing loadFile function
+            const fileObj = {
+                name: result.name,
+                size: result.size,
+                lastModified: new Date(result.modified).getTime(),
+                content: result.content,
+                path: result.path
+            };
+            
+            // Process the file content using existing logic
+            const isConfig = fileObj.name.endsWith('.cfg');
+            const fileData = {
+                name: fileObj.name,
+                size: fileObj.size,
+                lastModified: new Date(fileObj.lastModified),
+                content: fileObj.content,
+                lines: fileObj.content.split('\n'),
+                type: isConfig ? 'config' : 'log',
+                path: fileObj.path
+            };
+            
+            // Add to state and process
+            state.files.push(fileData);
+            state.parsedLogs.set(fileData.name, fileData.lines);
+            
+            if (!isConfig) {
+                parseAndDetectIssues(fileData);
+            }
+            
+            updateUI();
+            return fileData;
+        } else {
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        console.error('Error loading file from path:', error);
+        showToast(`Error loading ${filePath}: ${error.message}`, 'error');
+        return null;
+    }
+}
+
+/**
+ * Show modal for selecting which discovered files to load
+ */
+function showFileSelectionModal(files, directories) {
+    // Create modal HTML
+    const modalHTML = `
+        <div class="modal-overlay" id="fileSelectionModal" style="display: flex;">
+            <div class="modal" style="max-width: 800px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h3>Select Log Files to Load</h3>
+                    <button class="btn-icon" onclick="closeFileSelectionModal()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-content" style="max-height: 50vh; overflow-y: auto;">
+                    <p style="margin-bottom: 1rem;">Found ${files.length} log files in ${directories.length} directories:</p>
+                    <div style="margin-bottom: 1rem;">
+                        <button class="btn btn-small btn-secondary" onclick="selectAllDiscoveredFiles()">Select All</button>
+                        <button class="btn btn-small btn-secondary" onclick="deselectAllDiscoveredFiles()">Deselect All</button>
+                    </div>
+                    <div id="discoveredFilesList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        ${files.map((file, idx) => `
+                            <label style="display: flex; align-items: center; padding: 0.5rem; background: rgba(255, 255, 255, 0.05); border-radius: 4px; cursor: pointer;">
+                                <input type="checkbox" class="discovered-file-checkbox" value="${idx}" checked style="margin-right: 0.5rem;">
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 500;">${file.name}</div>
+                                    <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace;">${file.path}</div>
+                                    <div style="font-size: 0.75rem; color: var(--text-secondary);">
+                                        Size: ${(file.size / 1024).toFixed(1)} KB | Modified: ${new Date(file.modified).toLocaleString()}
+                                    </div>
+                                </div>
+                            </label>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeFileSelectionModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="loadSelectedDiscoveredFiles()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Load Selected Files
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if present
+    const existing = document.getElementById('fileSelectionModal');
+    if (existing) existing.remove();
+    
+    // Add to document
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+function closeFileSelectionModal() {
+    const modal = document.getElementById('fileSelectionModal');
+    if (modal) modal.remove();
+}
+
+function selectAllDiscoveredFiles() {
+    document.querySelectorAll('.discovered-file-checkbox').forEach(cb => cb.checked = true);
+}
+
+function deselectAllDiscoveredFiles() {
+    document.querySelectorAll('.discovered-file-checkbox').forEach(cb => cb.checked = false);
+}
+
+async function loadSelectedDiscoveredFiles() {
+    const checkboxes = document.querySelectorAll('.discovered-file-checkbox:checked');
+    const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.value));
+    
+    if (selectedIndices.length === 0) {
+        showToast('No files selected', 'warning');
+        return;
+    }
+    
+    closeFileSelectionModal();
+    showToast(`Loading ${selectedIndices.length} file(s)...`, 'info');
+    
+    let loadedCount = 0;
+    for (const idx of selectedIndices) {
+        const file = electronState.scannedFiles[idx];
+        if (file) {
+            const result = await loadFileFromPath(file.path);
+            if (result) loadedCount++;
+        }
+    }
+    
+    if (loadedCount > 0) {
+        showToast(`Successfully loaded ${loadedCount} file(s)`, 'success');
+        navigateTo('viewer');
+    }
+}
+
+function updateDiscoveryStatus(message) {
+    const statusEl = document.getElementById('discoveryStatus');
+    if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.style.display = message ? 'block' : 'none';
+    }
+}
+
+/**
+ * Add custom log path
+ */
+async function addCustomLogPath() {
+    if (!isElectron) return;
+    
+    const result = await window.electronAPI.showDirectoryPicker();
+    if (result.success && result.path) {
+        if (!electronState.customLogPaths.includes(result.path)) {
+            electronState.customLogPaths.push(result.path);
+            saveElectronSettings();
+            updateCustomPathsList();
+            showToast(`Added custom path: ${result.path}`, 'success');
+        } else {
+            showToast('Path already added', 'warning');
+        }
+    }
+}
+
+/**
+ * Update custom paths list in settings
+ */
+function updateCustomPathsList() {
+    const listEl = document.getElementById('customPathsList');
+    if (!listEl) return;
+    
+    if (electronState.customLogPaths.length === 0) {
+        listEl.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.875rem;">No custom paths configured</div>';
+        return;
+    }
+    
+    listEl.innerHTML = electronState.customLogPaths.map((path, idx) => `
+        <div class="path-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: rgba(255, 255, 255, 0.05); border-radius: 4px; margin-bottom: 0.5rem;">
+            <span style="font-family: monospace; font-size: 0.875rem;">${path}</span>
+            <button class="btn-icon btn-remove" onclick="removeCustomPath(${idx})" title="Remove">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+    `).join('');
+}
+
+function removeCustomPath(index) {
+    electronState.customLogPaths.splice(index, 1);
+    saveElectronSettings();
+    updateCustomPathsList();
+    showToast('Custom path removed', 'success');
+}
+
+/**
+ * Save Electron-specific settings
+ */
+function saveElectronSettings() {
+    const settings = {
+        customLogPaths: electronState.customLogPaths,
+        autoScanOnStartup: electronState.autoScanOnStartup,
+        watchDirectories: electronState.watchDirectories
+    };
+    localStorage.setItem('trakaLogAnalyzerElectronSettings', JSON.stringify(settings));
+}
+
+/**
+ * Load Electron-specific settings
+ */
+function loadElectronSettings() {
+    const saved = localStorage.getItem('trakaLogAnalyzerElectronSettings');
+    if (saved) {
+        try {
+            const settings = JSON.parse(saved);
+            electronState.customLogPaths = settings.customLogPaths || [];
+            electronState.autoScanOnStartup = settings.autoScanOnStartup !== false;
+            electronState.watchDirectories = settings.watchDirectories || false;
+            
+            // Update UI
+            const autoScanCheckbox = document.getElementById('autoScanOnStartup');
+            if (autoScanCheckbox) autoScanCheckbox.checked = electronState.autoScanOnStartup;
+            
+            const watchCheckbox = document.getElementById('watchDirectories');
+            if (watchCheckbox) watchCheckbox.checked = electronState.watchDirectories;
+            
+            updateCustomPathsList();
+        } catch (error) {
+            console.error('Error loading Electron settings:', error);
+        }
+    }
+}
+
+/**
+ * Initialize Electron-specific UI elements on page load
+ */
+function initElectronUI() {
+    if (!isElectron) return;
+    
+    // Show Electron-specific UI elements
+    const autoDiscoverySection = document.getElementById('autoDiscoverySection');
+    if (autoDiscoverySection) {
+        autoDiscoverySection.style.display = 'block';
+    }
+    
+    const electronLogDirsCard = document.getElementById('electronLogDirsCard');
+    if (electronLogDirsCard) {
+        electronLogDirsCard.style.display = 'block';
+    }
+    
+    // Update subtitle to show Desktop Edition
+    const subtitle = document.getElementById('heroSubtitle');
+    if (subtitle && subtitle.textContent.includes('Advanced log analysis')) {
+        subtitle.textContent += ' Desktop Edition with automatic log discovery.';
+    }
+    
+    // Load Electron settings
+    loadElectronSettings();
+    
+    // Load default paths
+    loadDefaultPaths();
+    
+    // Auto-scan on startup if enabled
+    if (electronState.autoScanOnStartup) {
+        setTimeout(() => {
+            console.log('Auto-scanning Traka log directories...');
+            // Don't auto-load, just scan and show the option
+        }, 1000);
+    }
+}
+
+/**
+ * Load and display default Traka paths
+ */
+async function loadDefaultPaths() {
+    if (!isElectron) return;
+    
+    try {
+        const result = await window.electronAPI.getDefaultPaths();
+        if (result.success) {
+            const listEl = document.getElementById('defaultPathsList');
+            if (listEl) {
+                listEl.innerHTML = result.paths.map(p => `
+                    <div class="path-item" style="display: flex; align-items: center; padding: 0.5rem; background: rgba(255, 255, 255, 0.05); border-radius: 4px; margin-bottom: 0.5rem;">
+                        <span style="flex: 1; font-family: monospace; font-size: 0.875rem;">${p.path}</span>
+                        <span style="font-size: 0.75rem; color: ${p.exists ? 'var(--accent-success)' : 'var(--text-secondary)'};">
+                            ${p.exists ? '✓ Found' : '✗ Not found'}
+                        </span>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (error) {
+        console.error('Error loading default paths:', error);
+    }
+}
+
+// ============================================
 // State Management
 // ============================================
 const state = {
@@ -122,6 +589,11 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     updateUI();
     initScrollSync(); // Initialize scroll synchronization for line numbers
+    
+    // Initialize Electron-specific features
+    if (isElectron) {
+        initElectronUI();
+    }
 });
 
 // ============================================
@@ -1774,6 +2246,17 @@ function saveSettings() {
     });
     
     localStorage.setItem('trakaLogAnalyzerSettings', JSON.stringify(state.settings));
+    
+    // Save Electron-specific settings if in Electron mode
+    if (isElectron) {
+        const autoScanCheckbox = document.getElementById('autoScanOnStartup');
+        const watchCheckbox = document.getElementById('watchDirectories');
+        
+        if (autoScanCheckbox) electronState.autoScanOnStartup = autoScanCheckbox.checked;
+        if (watchCheckbox) electronState.watchDirectories = watchCheckbox.checked;
+        
+        saveElectronSettings();
+    }
     
     // Re-analyze files with new settings
     state.files.forEach(file => detectIssues(file));

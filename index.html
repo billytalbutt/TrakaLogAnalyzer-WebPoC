@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Traka Log Analyzer - Web PoC</title>
+    <title>Traka Log Analyzer - Desktop Edition</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -115,7 +115,47 @@
                             </div>
                         </div>
                         <h1 class="hero-title">Traka Log Analyzer</h1>
-                        <p class="hero-subtitle">Advanced log analysis tool for TrakaWEB and Traka Integration Engine. Search, filter, compare, and identify issues quickly.</p>
+                        <p class="hero-subtitle" id="heroSubtitle">Advanced log analysis tool for TrakaWEB and Traka Integration Engine. Search, filter, compare, and identify issues quickly.</p>
+                        
+                        <!-- Electron Auto-Discovery Section (shown only in Electron) -->
+                        <div class="auto-discovery-section" id="autoDiscoverySection" style="display: none;">
+                            <div class="discovery-card">
+                                <div class="discovery-header">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                                        <polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline>
+                                        <polyline points="7.5 19.79 7.5 14.6 3 12"></polyline>
+                                        <polyline points="21 12 16.5 14.6 16.5 19.79"></polyline>
+                                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                                        <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                                    </svg>
+                                    <h3>Automatic Log Discovery</h3>
+                                </div>
+                                <p>Scan Traka installation directories for log files automatically</p>
+                                <div class="discovery-actions">
+                                    <button class="btn btn-primary" id="scanTrakaLogsBtn" onclick="scanTrakaLogs()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                        </svg>
+                                        Scan Traka Directories
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="selectCustomDirectory()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                        </svg>
+                                        Custom Directory
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="openElectronFilePicker()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                            <polyline points="14 2 14 8 20 8"></polyline>
+                                        </svg>
+                                        Browse Files
+                                    </button>
+                                </div>
+                                <div class="discovery-status" id="discoveryStatus"></div>
+                            </div>
+                        </div>
                         
                         <div class="drop-zone" id="homeDropZone">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -852,6 +892,42 @@
                         <div class="form-group checkbox-group">
                             <input type="checkbox" id="detectAPI" checked>
                             <label for="detectAPI">Detect API errors</label>
+                        </div>
+                    </div>
+                    
+                    <!-- Electron-specific: Log Directory Configuration -->
+                    <div class="settings-card" id="electronLogDirsCard" style="display: none;">
+                        <h3>Log Directory Configuration</h3>
+                        <p class="settings-description">Configure custom log file directories for automatic scanning</p>
+                        
+                        <div class="form-group">
+                            <label>Default Traka Directories:</label>
+                            <div id="defaultPathsList" class="paths-list">
+                                <!-- Will be populated dynamically -->
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Custom Directories:</label>
+                            <div id="customPathsList" class="paths-list custom-paths">
+                                <!-- Will be populated dynamically -->
+                            </div>
+                            <button class="btn btn-secondary btn-small" onclick="addCustomLogPath()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                                Add Custom Directory
+                            </button>
+                        </div>
+                        
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="autoScanOnStartup" checked>
+                            <label for="autoScanOnStartup">Automatically scan for logs on startup</label>
+                        </div>
+                        
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="watchDirectories">
+                            <label for="watchDirectories">Watch directories for new log files (real-time monitoring)</label>
                         </div>
                     </div>
                 </div>

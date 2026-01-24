@@ -1,0 +1,42 @@
+{
+  "name": "traka-log-analyzer",
+  "version": "3.0.0",
+  "description": "Traka Log Analyzer - Desktop Edition with automatic log file discovery",
+  "main": "main.js",
+  "author": "Traka",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.1"
+  },
+  "build": {
+    "appId": "com.traka.loganalyzer",
+    "productName": "Traka Log Analyzer",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "img/trakaweb-logo.png"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "css/**/*",
+      "js/**/*",
+      "img/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    }
+  }
+}
