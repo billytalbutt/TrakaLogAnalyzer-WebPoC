@@ -13,14 +13,12 @@ const chokidar = require('chokidar');
 let mainWindow;
 let fileWatchers = new Map();
 
-// Default Traka log file locations
+// Default Traka log file locations (exact paths that never change)
 const DEFAULT_LOG_PATHS = [
-    'C:\\ProgramData\\Traka\\Business Engine\\Logs',
-    'C:\\ProgramData\\Traka\\Comms Engine\\Logs',
-    'C:\\ProgramData\\Traka\\Integration Engine\\Logs',
-    'C:\\Program Files\\Traka\\TrakaWEB\\Logs',
-    'C:\\Program Files (x86)\\Traka\\TrakaWEB\\Logs',
-    'C:\\Logs', // Generic log location
+    'C:\\Program Files\\Traka\\Traka Business Engine Service\\Support\\Logs',
+    'C:\\Program Files\\Traka\\Traka Comms Engine Service\\Support\\Logs',
+    'C:\\inetpub\\wwwroot\\TrakaWeb\\App_Data\\Support\\Logs',
+    'C:\\ProgramData\\Traka\\Logs' // Integration Engine + all integration packages
 ];
 
 // ============================================
@@ -139,24 +137,163 @@ async function scanDirectory(dirPath, extensions = ['.log', '.txt', '.cfg']) {
 }
 
 /**
+ * Categorize Integration Engine logs by type
+ * Returns the newest log of each type found in the Integration folder
+ */
+function categorizeAndFilterLogs(files, directory) {
+    // Determine directory type
+    const dirLower = directory.toLowerCase();
+    
+    // For Integration Engine directory (C:\ProgramData\Traka\Logs)
+    // Contains multiple log types - categorize and get newest of each
+    if (dirLower.includes('programdata') && dirLower.includes('traka') && dirLower.includes('logs')) {
+        const categories = {
+            integrationEngine: [],
+            integrationMonitor: [],
+            activeDirectory: [],
+            sipass: [],
+            postbox: [],
+            symmetry: [],
+            onguard: [],
+            lenel: [],
+            ccure: [],
+            other: []
+        };
+        
+        files.forEach(file => {
+            const lowerName = file.name.toLowerCase();
+            
+            // Integration Monitor (monitoring service)
+            if (lowerName.includes('monitor')) {
+                categories.integrationMonitor.push(file);
+            }
+            // Active Directory integration
+            else if (lowerName.includes('activedirectory') || lowerName.includes('active_directory') || 
+                     (lowerName.includes('ad') && !lowerName.includes('read'))) {
+                categories.activeDirectory.push(file);
+            }
+            // SiPass integration
+            else if (lowerName.includes('sipass')) {
+                categories.sipass.push(file);
+            }
+            // PostBox integration
+            else if (lowerName.includes('postbox')) {
+                categories.postbox.push(file);
+            }
+            // Symmetry integration
+            else if (lowerName.includes('symmetry')) {
+                categories.symmetry.push(file);
+            }
+            // OnGuard integration
+            else if (lowerName.includes('onguard')) {
+                categories.onguard.push(file);
+            }
+            // Lenel integration
+            else if (lowerName.includes('lenel')) {
+                categories.lenel.push(file);
+            }
+            // CCure integration
+            else if (lowerName.includes('ccure')) {
+                categories.ccure.push(file);
+            }
+            // Integration Engine service (main logs)
+            else if (lowerName.includes('integration') || lowerName.includes('engine')) {
+                categories.integrationEngine.push(file);
+            }
+            // Unknown/other logs
+            else {
+                categories.other.push(file);
+            }
+        });
+        
+        // Sort each category by modification date (newest first) and take only the newest
+        const newestLogs = [];
+        Object.keys(categories).forEach(key => {
+            if (categories[key].length > 0) {
+                // Sort by modification date descending (newest first)
+                categories[key].sort((a, b) => 
+                    new Date(b.modified) - new Date(a.modified)
+                );
+                
+                // Take the newest (first) from this category
+                const newest = categories[key][0];
+                newest.category = key; // Tag with category for UI display
+                newestLogs.push(newest);
+            }
+        });
+        
+        return newestLogs;
+    }
+    
+    // For Business Engine, Comms Engine, TrakaWEB - just get the newest log
+    else {
+        if (files.length === 0) return [];
+        
+        // Sort by modification date descending (newest first)
+        files.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        
+        // Return only the newest log
+        return [files[0]];
+    }
+}
+
+/**
  * Scan all default Traka log locations
  */
 async function scanTrakaLogDirectories() {
-    const allFiles = [];
+    const categorizedFiles = [];
     const accessiblePaths = [];
     
     for (const dirPath of DEFAULT_LOG_PATHS) {
         if (await directoryExists(dirPath)) {
             accessiblePaths.push(dirPath);
             const files = await scanDirectory(dirPath);
-            allFiles.push(...files);
+            
+            // Categorize and filter to newest logs only
+            const filteredFiles = categorizeAndFilterLogs(files, dirPath);
+            
+            // Add directory label for UI display
+            filteredFiles.forEach(file => {
+                if (dirPath.includes('Business Engine')) {
+                    file.engineType = 'Business Engine';
+                } else if (dirPath.includes('Comms Engine')) {
+                    file.engineType = 'Comms Engine';
+                } else if (dirPath.includes('TrakaWeb')) {
+                    file.engineType = 'TrakaWEB';
+                } else if (dirPath.includes('ProgramData')) {
+                    // Integration Engine logs - already have category tag
+                    if (file.category === 'integrationEngine') {
+                        file.engineType = 'Integration Engine Service';
+                    } else if (file.category === 'integrationMonitor') {
+                        file.engineType = 'Integration Monitor';
+                    } else if (file.category === 'activeDirectory') {
+                        file.engineType = 'Active Directory Integration';
+                    } else if (file.category === 'sipass') {
+                        file.engineType = 'SiPass Integration';
+                    } else if (file.category === 'postbox') {
+                        file.engineType = 'PostBox Integration';
+                    } else if (file.category === 'symmetry') {
+                        file.engineType = 'Symmetry Integration';
+                    } else if (file.category === 'onguard') {
+                        file.engineType = 'OnGuard Integration';
+                    } else if (file.category === 'lenel') {
+                        file.engineType = 'Lenel Integration';
+                    } else if (file.category === 'ccure') {
+                        file.engineType = 'CCure Integration';
+                    } else {
+                        file.engineType = 'Integration Log';
+                    }
+                }
+            });
+            
+            categorizedFiles.push(...filteredFiles);
         }
     }
     
     return {
-        files: allFiles,
+        files: categorizedFiles,
         scannedPaths: accessiblePaths,
-        totalFiles: allFiles.length
+        totalFiles: categorizedFiles.length
     };
 }
 

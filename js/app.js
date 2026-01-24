@@ -212,10 +212,44 @@ async function loadFileFromPath(filePath) {
  * Show modal for selecting which discovered files to load
  */
 function showFileSelectionModal(files, directories) {
-    // Create modal HTML
+    // Group files by engineType for better organization
+    const grouped = {};
+    files.forEach((file, idx) => {
+        const type = file.engineType || 'Other Logs';
+        if (!grouped[type]) {
+            grouped[type] = [];
+        }
+        grouped[type].push({ file, idx });
+    });
+    
+    // Create modal HTML with grouped files
+    let filesHTML = '';
+    Object.keys(grouped).sort().forEach(engineType => {
+        const items = grouped[engineType];
+        filesHTML += `
+            <div style="margin-bottom: 1rem;">
+                <div style="font-weight: 600; color: var(--accent-primary); margin-bottom: 0.5rem; padding: 0.5rem; background: rgba(59, 130, 246, 0.1); border-radius: 4px;">
+                    ${engineType} ${items.length > 1 ? '(' + items.length + ' files)' : ''}
+                </div>
+                ${items.map(({ file, idx }) => `
+                    <label style="display: flex; align-items: center; padding: 0.5rem; padding-left: 1.5rem; background: rgba(255, 255, 255, 0.03); border-radius: 4px; cursor: pointer; margin-bottom: 0.25rem;">
+                        <input type="checkbox" class="discovered-file-checkbox" value="${idx}" checked style="margin-right: 0.5rem;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 500;">${file.name}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace;">${file.path}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">
+                                Size: ${(file.size / 1024).toFixed(1)} KB | Modified: ${new Date(file.modified).toLocaleString()}
+                            </div>
+                        </div>
+                    </label>
+                `).join('')}
+            </div>
+        `;
+    });
+    
     const modalHTML = `
         <div class="modal-overlay" id="fileSelectionModal" style="display: flex;">
-            <div class="modal" style="max-width: 800px; max-height: 80vh;">
+            <div class="modal" style="max-width: 900px; max-height: 85vh;">
                 <div class="modal-header">
                     <h3>Select Log Files to Load</h3>
                     <button class="btn-icon" onclick="closeFileSelectionModal()">
@@ -225,25 +259,17 @@ function showFileSelectionModal(files, directories) {
                         </svg>
                     </button>
                 </div>
-                <div class="modal-content" style="max-height: 50vh; overflow-y: auto;">
-                    <p style="margin-bottom: 1rem;">Found ${files.length} log files in ${directories.length} directories:</p>
+                <div class="modal-content" style="max-height: 55vh; overflow-y: auto;">
+                    <p style="margin-bottom: 1rem;">
+                        Found <strong>${files.length}</strong> newest log files from <strong>${directories.length}</strong> directories. 
+                        All files are pre-selected (newest of each type):
+                    </p>
                     <div style="margin-bottom: 1rem;">
                         <button class="btn btn-small btn-secondary" onclick="selectAllDiscoveredFiles()">Select All</button>
                         <button class="btn btn-small btn-secondary" onclick="deselectAllDiscoveredFiles()">Deselect All</button>
                     </div>
                     <div id="discoveredFilesList" style="display: flex; flex-direction: column; gap: 0.5rem;">
-                        ${files.map((file, idx) => `
-                            <label style="display: flex; align-items: center; padding: 0.5rem; background: rgba(255, 255, 255, 0.05); border-radius: 4px; cursor: pointer;">
-                                <input type="checkbox" class="discovered-file-checkbox" value="${idx}" checked style="margin-right: 0.5rem;">
-                                <div style="flex: 1;">
-                                    <div style="font-weight: 500;">${file.name}</div>
-                                    <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace;">${file.path}</div>
-                                    <div style="font-size: 0.75rem; color: var(--text-secondary);">
-                                        Size: ${(file.size / 1024).toFixed(1)} KB | Modified: ${new Date(file.modified).toLocaleString()}
-                                    </div>
-                                </div>
-                            </label>
-                        `).join('')}
+                        ${filesHTML}
                     </div>
                 </div>
                 <div class="modal-actions">
