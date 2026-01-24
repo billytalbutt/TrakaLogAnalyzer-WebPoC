@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traka Log Analyzer - Web PoC</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="icon" type="image/png" href="img/trakaweb-logo.png">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Navigation Sidebar -->
+        <nav class="nav-sidebar">
+            <div class="nav-brand">
+                <img src="img/trakaweb-logo.png" alt="TrakaWEB" class="nav-logo">
+                <span class="nav-title">Log Analyzer</span>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-page="home">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                        <polyline points="9,22 9,12 15,12 15,22"></polyline>
+                    </svg>
+                    <span>Home</span>
+                </li>
+                <li class="nav-item" data-page="viewer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <span>Log Viewer</span>
+                </li>
+                <li class="nav-item" data-page="compare">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="18" rx="1"></rect>
+                        <rect x="14" y="3" width="7" height="18" rx="1"></rect>
+                    </svg>
+                    <span>Compare</span>
+                </li>
+                <li class="nav-item" data-page="issues">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <span>Issues</span>
+                    <span class="nav-badge" id="issuesBadge">0</span>
+                </li>
+                                <li class="nav-item" data-page="analytics">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="20" x2="12" y2="10"></line>
+                        <line x1="18" y1="20" x2="18" y2="4"></line>
+                        <line x1="6" y1="20" x2="6" y2="16"></line>
+                    </svg>
+                    <span>Analytics</span>
+                </li>
+<li class="nav-item" data-page="settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span>Settings</span>
+                </li>
+            </ul>
+            <div class="nav-footer">
+                <div class="log-stats">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                    <span id="loadedFilesCount">0 files loaded</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Home Page -->
+            <section class="page active" id="page-home">
+                <div class="welcome-hero">
+                    <div class="hero-content">
+                        <div class="hero-branding">
+                            <div class="hero-logo">
+                                <img src="img/TW Logo NEW.png" alt="TrakaWEB">
+                            </div>
+                            <div class="hero-icons">
+                                <div class="hero-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                                    </svg>
+                                </div>
+                                <div class="hero-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <circle cx="11" cy="11" r="8"></circle>
+                                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                    </svg>
+                                </div>
+                                <div class="hero-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+                        <h1 class="hero-title">Traka Log Analyzer</h1>
+                        <p class="hero-subtitle">Advanced log analysis tool for TrakaWEB and Traka Integration Engine. Search, filter, compare, and identify issues quickly.</p>
+                        
+                        <div class="drop-zone" id="homeDropZone">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            <span class="drop-text">Drag & drop log files here</span>
+                            <span class="drop-hint">or click to browse</span>
+                            <input type="file" id="homeFileInput" accept=".log,.txt" multiple hidden>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card" onclick="navigateTo('viewer')">
+                        <div class="stat-icon files">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statFiles">0</span>
+                            <span class="stat-label">Log Files Loaded</span>
+                        </div>
+                    </div>
+                    <div class="stat-card" onclick="navigateTo('viewer')">
+                        <div class="stat-icon lines">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="3" y1="6" x2="21" y2="6"></line>
+                                <line x1="3" y1="12" x2="21" y2="12"></line>
+                                <line x1="3" y1="18" x2="21" y2="18"></line>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statLines">0</span>
+                            <span class="stat-label">Total Lines</span>
+                        </div>
+                    </div>
+                    <div class="stat-card issues-card" onclick="navigateTo('issues')">
+                        <div class="stat-icon issues">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statIssues">0</span>
+                            <span class="stat-label">Issues Detected</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Recent Files -->
+                <div class="recent-files-section" id="recentFilesSection" style="display: none;">
+                    <h3>Loaded Files</h3>
+                    <div class="files-list" id="filesList"></div>
+                </div>
+            </section>
+
+            <!-- Log Viewer Page -->
+            <section class="page" id="page-viewer">
+                <div class="page-header">
+                    <h2>Log Viewer</h2>
+                    <p>View, search, and filter log file contents</p>
+                </div>
+                
+                <div class="viewer-toolbar">
+                    <div class="file-selector">
+                        <label>Select Log File:</label>
+                        <select id="viewerFileSelect" class="file-dropdown">
+                            <option value="">-- Load a file first --</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-actions">
+                        <button class="btn btn-secondary" onclick="document.getElementById('viewerFileInput').click()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            Load File
+                        </button>
+                        <input type="file" id="viewerFileInput" accept=".log,.txt" multiple hidden>
+                    </div>
+                </div>
+                
+                <div class="search-filter-bar">
+                    <div class="search-box large">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="searchInput" placeholder="Search logs... (supports regex with /pattern/)">
+                        <div class="search-nav" id="searchNav" style="display: none;">
+                            <span id="searchCount">0/0</span>
+                            <button class="btn-icon" onclick="navigateSearch(-1)" title="Previous match">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="18 15 12 9 6 15"></polyline>
+                                </svg>
+                            </button>
+                            <button class="btn-icon" onclick="navigateSearch(1)" title="Next match">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="filter-chips">
+                        <button class="filter-chip active" data-level="all">All</button>
+                        <button class="filter-chip" data-level="error">
+                            <span class="chip-dot error"></span>Error
+                        </button>
+                        <button class="filter-chip" data-level="warning">
+                            <span class="chip-dot warning"></span>Warning
+                        </button>
+                        <button class="filter-chip" data-level="info">
+                            <span class="chip-dot info"></span>Info
+                        </button>
+                        <button class="filter-chip" data-level="debug">
+                            <span class="chip-dot debug"></span>Debug
+                        </button>
+                    </div>
+                    
+                    <!-- Engine Filters -->
+                    <div class="engine-filters">
+                        <span class="engine-filter-label">Engines:</span>
+                        <button class="engine-filter-chip" data-engine="business" onclick="toggleEngineFilter('business')">
+                            🏢 Business
+                        </button>
+                        <button class="engine-filter-chip" data-engine="comms" onclick="toggleEngineFilter('comms')">
+                            📡 Comms
+                        </button>
+                        <button class="engine-filter-chip" data-engine="integration" onclick="toggleEngineFilter('integration')">
+                            🔌 Integration
+                        </button>
+                    </div>
+                    
+                    <div class="date-filter">
+                        <label>Time Range:</label>
+                        <input type="datetime-local" id="dateFrom" class="date-input">
+                        <span>to</span>
+                        <input type="datetime-local" id="dateTo" class="date-input">
+                        <button class="btn btn-small btn-secondary" onclick="clearDateFilter()">Clear</button>
+                    </div>
+                </div>
+                
+                <!-- Log Display Area -->
+                <div class="log-container">
+                    <div class="log-gutter" id="logGutter"></div>
+                    <div class="log-content" id="logContent">
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                            </svg>
+                            <p>No log file loaded</p>
+                            <span>Load a log file to start analyzing</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="viewer-footer">
+                    <span id="viewerStats">No file loaded</span>
+                    <div class="jump-to-line">
+                        <label>Go to line:</label>
+                        <input type="number" id="jumpToLine" min="1" placeholder="#">
+                        <button class="btn btn-small btn-secondary" onclick="jumpToLine()">Go</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Compare Page -->
+            <section class="page" id="page-compare">
+                <div class="page-header">
+                    <h2>Compare Logs</h2>
+                    <p>Side-by-side comparison of multiple log files</p>
+                </div>
+                
+                <div class="compare-toolbar">
+                    <div class="compare-actions">
+                        <button class="btn btn-secondary" onclick="document.getElementById('compareFileInput').click()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            Add Files
+                        </button>
+                        <input type="file" id="compareFileInput" accept=".log,.txt" multiple hidden>
+                        <button class="btn btn-secondary" id="syncScrollBtn" onclick="toggleSyncScroll()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="17 1 21 5 17 9"></polyline>
+                                <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                                <polyline points="7 23 3 19 7 15"></polyline>
+                                <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                            </svg>
+                            Sync Scroll
+                        </button>
+                        <button class="btn btn-secondary" onclick="highlightDifferences()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 3v18"></path>
+                                <path d="M5 10l7-7 7 7"></path>
+                            </svg>
+                            Highlight Differences
+                        </button>
+                    </div>
+                    <div class="unified-search">
+                        <div class="search-box">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input type="text" id="compareSearchInput" placeholder="Search across all logs...">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="compare-container" id="compareContainer">
+                    <div class="compare-empty">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="3" y="3" width="7" height="18" rx="1"></rect>
+                            <rect x="14" y="3" width="7" height="18" rx="1"></rect>
+                        </svg>
+                        <p>No logs loaded for comparison</p>
+                        <span>Load two or more log files to compare them side by side</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Issues Page -->
+            <section class="page" id="page-issues">
+                <div class="page-header">
+                    <h2>Detected Issues</h2>
+                    <p>Automatically identified problems and anomalies in log files</p>
+                </div>
+                
+                <div class="issues-toolbar">
+                    <div class="issue-categories">
+                        <button class="category-btn active" data-category="all">
+                            All Issues
+                            <span class="category-count" id="countAll">0</span>
+                        </button>
+                        <button class="category-btn" data-category="critical">
+                            <span class="category-dot critical"></span>Critical
+                            <span class="category-count" id="countCritical">0</span>
+                        </button>
+                        <button class="category-btn" data-category="error">
+                            <span class="category-dot error"></span>Error
+                            <span class="category-count" id="countError">0</span>
+                        </button>
+                        <button class="category-btn" data-category="warning">
+                            <span class="category-dot warning"></span>Warning
+                            <span class="category-count" id="countWarning">0</span>
+                        </button>
+                        <button class="category-btn" data-category="performance">
+                            <span class="category-dot performance"></span>Performance
+                            <span class="category-count" id="countPerformance">0</span>
+                        </button>
+                    </div>
+                    <button class="btn btn-secondary" onclick="exportIssues()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Export Report
+                    </button>
+                </div>
+                
+                <div class="issues-list" id="issuesList">
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        <p>No issues detected</p>
+                        <span>Load log files to automatically detect issues</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings Page -->
+            <section class="page" id="page-settings">
+                <div class="page-header">
+                    <h2>Settings</h2>
+                    <p>Configure analysis options and issue detection rules</p>
+                </div>
+                
+                <div class="settings-grid">
+                    <div class="settings-card">
+                        <h3>Issue Detection</h3>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectErrors" checked>
+                            <label for="detectErrors">Detect error messages</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectExceptions" checked>
+                            <label for="detectExceptions">Detect exceptions and stack traces</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectTimeouts" checked>
+                            <label for="detectTimeouts">Detect timeout issues</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectConnections" checked>
+                            <label for="detectConnections">Detect connection problems</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectAuth" checked>
+                            <label for="detectAuth">Detect authentication failures</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectPerformance" checked>
+                            <label for="detectPerformance">Detect performance issues</label>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-card">
+                        <h3>Display Options</h3>
+                        <div class="form-group">
+                            <label for="fontSizeSelect">Log Font Size</label>
+                            <select id="fontSizeSelect" class="form-select">
+                                <option value="12">12px - Small</option>
+                                <option value="13" selected>13px - Default</option>
+                                <option value="14">14px - Medium</option>
+                                <option value="16">16px - Large</option>
+                            </select>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="wordWrap" checked>
+                            <label for="wordWrap">Wrap long lines</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="showLineNumbers" checked>
+                            <label for="showLineNumbers">Show line numbers</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="highlightSearch" checked>
+                            <label for="highlightSearch">Highlight search matches</label>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-card">
+                        <h3>Custom Patterns</h3>
+                        <p class="settings-description">Add custom regex patterns to detect specific issues</p>
+                        <div class="custom-patterns" id="customPatterns">
+                            <div class="pattern-input">
+                                <input type="text" placeholder="Pattern (regex)" class="pattern-regex">
+                                <select class="pattern-severity">
+                                    <option value="error">Error</option>
+                                    <option value="warning">Warning</option>
+                                    <option value="info">Info</option>
+                                </select>
+                                <input type="text" placeholder="Description" class="pattern-desc">
+                                <button class="btn-icon btn-remove" onclick="removePattern(this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-small" onclick="addPattern()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                            Add Pattern
+                        </button>
+                    </div>
+                    
+                    <div class="settings-card">
+                        <h3>Traka-Specific Detection</h3>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectLicensing" checked>
+                            <label for="detectLicensing">Detect licensing issues</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectDatabase" checked>
+                            <label for="detectDatabase">Detect database connection issues</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectIntegration" checked>
+                            <label for="detectIntegration">Detect integration engine failures</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectCabinet" checked>
+                            <label for="detectCabinet">Detect cabinet communication issues</label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="detectAPI" checked>
+                            <label for="detectAPI">Detect API errors</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="action-bar">
+                    <button class="btn btn-secondary" onclick="resetSettings()">Reset to Defaults</button>
+                    <button class="btn btn-primary" onclick="saveSettings()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                            <polyline points="7 3 7 8 15 8"></polyline>
+                        </svg>
+                        Save Settings
+                    </button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Issue Detail Modal -->
+    <div class="modal-overlay" id="issueModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Issue Details</h3>
+                <button class="btn-icon" onclick="closeModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-content" id="issueModalContent"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                <button class="btn btn-primary" onclick="goToIssueLine()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                    View in Log
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

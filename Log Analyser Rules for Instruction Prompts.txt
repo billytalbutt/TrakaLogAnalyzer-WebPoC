@@ -1,0 +1,6 @@
+
+Log Analyser Rules for Assistance Prompts...
+
+"No Business Engine is set. Use Traka Admin to select one." = Open TrakaWEB Admin, Login, navigate to the Business Engine record on the left hand pane, right-click on the Business Engine record and select Set As Current, save changes. This means you may need to reset the credentials on the Comms Engine(s) and the Integration Engine (if you're using it).
+
+"Business Engine with ID "bddd4356-f434-4010-bc28-8af81195c3bd" not found. Use Traka Admin to select one." = Open TrakaWEB Admin, Login, navigate to the Business Engine record on the left hand pane, right-click on the Business Engine record and select Set As Current, save changes. This means you may need to reset the credentials on the Comms Engine(s) and the Integration Engine (if you're using it).
