@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traka Log Analyzer — README</title>
+    <link rel="icon" type="image/png" href="../img/trakaweb-logo.png">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        :root{--brand:#ff6b35;--brand-light:#ff8a5c;--brand-soft:rgba(255,107,53,0.08);--blue:#3b82f6;--green:#10b981;--purple:#8b5cf6;--yellow:#f59e0b;--red:#ef4444;--dark-900:#0d0f12;--dark-800:#151820;--dark-700:#1c2029;--dark-600:#232831;--dark-500:#2a303c;--text:#f0f2f5;--text-dim:#9aa1b0;--text-muted:#6b7280;--border:#2a303c;--radius:12px;--radius-sm:8px}
+        html{scroll-behavior:smooth}
+        body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--dark-900);color:var(--text);line-height:1.7;-webkit-font-smoothing:antialiased}
+        @media print{body{background:#fff;color:#1a1a1a}.hero{background:#fff!important;border-bottom:2px solid var(--brand)}.hero h1,.hero p{color:#1a1a1a!important}.feature-card{border:1px solid #ddd;background:#fafafa}}
+        ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:var(--dark-900)}::-webkit-scrollbar-thumb{background:var(--dark-500);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:var(--brand)}
+        .container{max-width:860px;margin:0 auto;padding:0 2rem}
+        .hero{padding:4rem 0 3rem;text-align:center;background:linear-gradient(180deg,rgba(255,107,53,0.06) 0%,transparent 70%);position:relative}
+        .hero::before{content:'';position:absolute;top:-50%;left:50%;transform:translateX(-50%);width:500px;height:500px;background:radial-gradient(circle,rgba(255,107,53,0.07) 0%,transparent 70%);pointer-events:none}
+        .hero-badge{display:inline-flex;align-items:center;gap:0.5rem;background:var(--brand-soft);border:1px solid rgba(255,107,53,0.2);color:var(--brand);font-size:0.7rem;font-weight:700;padding:0.3rem 0.875rem;border-radius:50px;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:1.25rem}
+        .hero h1{font-size:clamp(1.75rem,4vw,2.75rem);font-weight:800;line-height:1.15;margin-bottom:0.75rem}
+        .hero h1 span{color:var(--brand)}
+        .hero p{font-size:1rem;color:var(--text-dim);max-width:540px;margin:0 auto;line-height:1.65}
+        .hero-meta{margin-top:1.5rem;display:flex;justify-content:center;gap:1.5rem;flex-wrap:wrap}
+        .hero-meta-item{font-size:0.8125rem;color:var(--text-muted);display:flex;align-items:center;gap:0.375rem}
+        .hero-meta-item strong{color:var(--text-dim)}
+        section{padding:3rem 0;border-top:1px solid var(--border)}
+        h2{font-size:1.5rem;font-weight:800;margin-bottom:0.5rem}
+        h3{font-size:1.05rem;font-weight:700;margin:1.75rem 0 0.5rem;color:var(--text)}
+        p{margin-bottom:0.875rem;color:var(--text-dim);font-size:0.9375rem}
+        ul,ol{margin:0.5rem 0 1rem 1.25rem;color:var(--text-dim);font-size:0.9375rem}
+        li{margin-bottom:0.35rem}
+        code{background:var(--dark-700);padding:2px 6px;border-radius:4px;font-size:0.8125em;color:var(--brand-light);font-family:'Cascadia Code','Fira Code',monospace}
+        pre{background:var(--dark-800);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem 1.25rem;overflow-x:auto;margin:1rem 0;font-size:0.8125rem;line-height:1.6;color:var(--text-dim);font-family:'Cascadia Code','Fira Code',monospace}
+        .callout{border-radius:var(--radius-sm);padding:1rem 1.25rem;margin:1.25rem 0;display:flex;gap:0.75rem;align-items:flex-start;font-size:0.8125rem;line-height:1.65}
+        .callout p{margin:0}
+        .callout-tip{background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);color:var(--text-dim)}
+        .callout-warn{background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);color:var(--text-dim)}
+        .callout-info{background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);color:var(--text-dim)}
+        .callout strong{color:var(--text)}
+        .callout-icon{font-size:1rem;flex-shrink:0;margin-top:1px}
+        .feature-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;margin:1.5rem 0}
+        .feature-card{background:var(--dark-800);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;transition:all 0.25s ease}
+        .feature-card:hover{border-color:rgba(255,107,53,0.3);transform:translateY(-2px)}
+        .feature-card h3{margin:0 0 0.4rem;font-size:0.9375rem}
+        .feature-card p{margin:0;font-size:0.8125rem;line-height:1.6}
+        .fi{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:0.875rem;font-size:1.125rem}
+        .fi-o{background:rgba(255,107,53,0.12)}.fi-b{background:rgba(59,130,246,0.12)}.fi-g{background:rgba(16,185,129,0.12)}.fi-p{background:rgba(139,92,246,0.12)}.fi-y{background:rgba(245,158,11,0.12)}
+        table{width:100%;border-collapse:separate;border-spacing:0;margin:1.25rem 0;font-size:0.8125rem}
+        thead th{text-align:left;padding:0.625rem 0.875rem;background:var(--dark-700);color:var(--text);font-weight:600;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em}
+        thead th:first-child{border-radius:var(--radius-sm) 0 0 0}thead th:last-child{border-radius:0 var(--radius-sm) 0 0}
+        tbody td{padding:0.625rem 0.875rem;border-bottom:1px solid var(--border);color:var(--text-dim)}
+        tbody tr:hover td{background:var(--dark-800)}
+        .footer{padding:2.5rem 0;border-top:1px solid var(--border);text-align:center;color:var(--text-muted);font-size:0.8125rem}
+        .footer .brand{color:var(--brand);font-weight:600}
+        @media(max-width:768px){.container{padding:0 1.25rem}.feature-grid{grid-template-columns:1fr}.hero{padding:3rem 0 2rem}}
+    </style>
+</head>
+<body>
+
+<header class="hero">
+    <div class="container">
+        <div class="hero-badge">README</div>
+        <h1>Traka <span>Log Analyzer</span></h1>
+        <p>Desktop Edition — Automatic log discovery, real-time monitoring, intelligent analysis, and side-by-side comparison for Traka support engineers.</p>
+        <div class="hero-meta">
+            <span class="hero-meta-item"><strong>Version</strong> 3.0.0</span>
+            <span class="hero-meta-item"><strong>Platform</strong> Windows (Electron)</span>
+            <span class="hero-meta-item"><strong>Runtime</strong> Node.js + Chromium</span>
+        </div>
+    </div>
+</header>
+
+<main class="container">
+
+    <section>
+        <h2>What Is This?</h2>
+        <p>The Traka Log Analyzer is a desktop application purpose-built for Traka support engineers. It reads, parses, and analyses log files from the Traka product suite — Business Engine, Comms Engine, Integration Engine, and all integration plugins — then surfaces issues, suggests fixes, and lets you compare files side by side.</p>
+        <p>It runs locally on your machine. No data is sent anywhere. No internet connection is required after installation.</p>
+    </section>
+
+    <section>
+        <h2>Key Features</h2>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="fi fi-o">🔎</div>
+                <h3>Auto-Discovery</h3>
+                <p>Scans standard Traka installation directories and loads the newest log from each engine automatically.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fi fi-b">📊</div>
+                <h3>Side-by-Side Compare</h3>
+                <p>View 2–6 log files at once. Sync scroll, time sync, search across all files, and highlight differences.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fi fi-g">⚠️</div>
+                <h3>Automatic Issue Detection</h3>
+                <p>Scans for 50+ known error patterns with severity ratings and resolution steps from a built-in knowledge base.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fi fi-p">📡</div>
+                <h3>Live Tail</h3>
+                <p>Monitor log files in real time as they're written. New lines appear with a visual highlight animation.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fi fi-y">🔗</div>
+                <h3>File Stitching</h3>
+                <p>Merge multiple logs into a single chronological timeline with colour-coded source labels.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fi fi-o">🎨</div>
+                <h3>Custom Highlighting</h3>
+                <p>Create BareTail-style colour rules for keywords and phrases. Apply per file or globally.</p>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>System Requirements</h2>
+        <table>
+            <thead><tr><th>Requirement</th><th>Minimum</th></tr></thead>
+            <tbody>
+                <tr><td>Operating System</td><td>Windows 10 (64-bit) or later</td></tr>
+                <tr><td>RAM</td><td>4 GB (8 GB recommended for large log files)</td></tr>
+                <tr><td>Disk Space</td><td>~250 MB (application + Electron runtime)</td></tr>
+                <tr><td>Display</td><td>1280 &times; 720 minimum (1920 &times; 1080 recommended)</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>Installation &amp; Running</h2>
+
+        <h3>Option A: From Pre-Built Installer</h3>
+        <p>If you have the <code>.exe</code> installer (built with Electron Builder), simply run it. The application installs to your user profile and creates a Start Menu shortcut.</p>
+
+        <h3>Option B: From Source (Development)</h3>
+        <ol>
+            <li>Install <a href="https://nodejs.org/" style="color:var(--brand);">Node.js</a> (v18 or later)</li>
+            <li>Open a terminal in the project directory</li>
+            <li>Run <code>npm install</code> to install dependencies</li>
+            <li>Run <code>npm start</code> to launch the application</li>
+        </ol>
+
+        <h3>Option C: Portable (No Install)</h3>
+        <p>Copy the deployment folder to any Windows machine with the Electron runtime available and run <code>npm start</code>, or use the pre-packaged portable build if available.</p>
+
+        <div class="callout callout-info">
+            <span class="callout-icon">ℹ️</span>
+            <p><strong>First launch:</strong> The app opens to the Home page. If running on a Traka server, click <strong>Scan Traka Directories</strong> to auto-discover logs. Otherwise, drag and drop your log files onto the page.</p>
+        </div>
+    </section>
+
+    <section>
+        <h2>Supported File Types</h2>
+        <table>
+            <thead><tr><th>Extension</th><th>Type</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td><code>.log</code></td><td>Log file</td><td>Full analysis, issue detection, live tail</td></tr>
+                <tr><td><code>.txt</code></td><td>Text / Log</td><td>Treated as log files (e.g., <code>Debugging_Log.txt</code>)</td></tr>
+                <tr><td><code>.cfg</code></td><td>Config file</td><td>Loaded for viewing and comparison; no issue detection</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>Auto-Discovery Paths</h2>
+        <p>When using <strong>Scan Traka Directories</strong>, the following locations are searched:</p>
+        <pre>C:\Program Files\Traka\Traka Business Engine Service\Support\Logs
+C:\Program Files\Traka\Traka Comms Engine Service\Support\Logs
+C:\inetpub\wwwroot\TrakaWeb\App_Data\Support\Logs
+C:\ProgramData\Traka\Logs</pre>
+        <p>Additional custom directories can be configured in <strong>Settings</strong>.</p>
+    </section>
+
+    <section>
+        <h2>Project Structure</h2>
+        <table>
+            <thead><tr><th>File / Folder</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td><code>main.js</code></td><td>Electron main process — window management, file system access</td></tr>
+                <tr><td><code>preload.js</code></td><td>Secure bridge between Electron and the renderer</td></tr>
+                <tr><td><code>index.html</code></td><td>Application shell — all pages, navigation, modals</td></tr>
+                <tr><td><code>css/</code></td><td>Stylesheets (main app + solution cards)</td></tr>
+                <tr><td><code>js/app.js</code></td><td>Core application logic — all features and UI interactions</td></tr>
+                <tr><td><code>js/solution-database.js</code></td><td>Knowledge base of known issues and resolutions</td></tr>
+                <tr><td><code>js/solution-cards.js</code></td><td>Solution card rendering and interactions</td></tr>
+                <tr><td><code>js/pdf-exporter.js</code></td><td>PDF report generation</td></tr>
+                <tr><td><code>img/</code></td><td>Logos and branding assets</td></tr>
+                <tr><td><code>user-guide.html</code></td><td>Comprehensive user documentation</td></tr>
+                <tr><td><code>package.json</code></td><td>Node.js project manifest and Electron build config</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>Building a Distributable</h2>
+        <p>To create a Windows installer:</p>
+        <pre>npm install
+npm run build:win</pre>
+        <p>Output is written to the <code>dist/</code> folder. The installer (<code>.exe</code>) is ready for distribution.</p>
+    </section>
+
+    <section>
+        <h2>Documentation</h2>
+        <ul>
+            <li><strong><a href="../user-guide.html" style="color:var(--brand);">User Guide</a></strong> — Complete feature walkthrough with tips and best practices</li>
+            <li><strong><a href="release-notes.html" style="color:var(--brand);">Release Notes</a></strong> — What's new in each version</li>
+        </ul>
+    </section>
+
+</main>
+
+<footer class="footer">
+    <div class="container">
+        <p><span class="brand">Traka Log Analyzer</span> &middot; Part of the TrakaWEB Tools Suite</p>
+        <p style="margin-top:0.5rem">&copy; 2026 Traka, an ASSA ABLOY company. All rights reserved.</p>
+    </div>
+</footer>
+
+</body>
+</html>
