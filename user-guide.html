@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traka Log Analyzer — User Guide</title>
+    <link rel="icon" type="image/png" href="img/trakaweb-logo.png">
+    <style>
+        /* ========================================
+           TRAKA LOG ANALYZER — USER GUIDE
+           Production-quality documentation
+           ======================================== */
+
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --brand:       #ff6b35;
+            --brand-light: #ff8a5c;
+            --brand-glow:  rgba(255, 107, 53, 0.15);
+            --brand-soft:  rgba(255, 107, 53, 0.08);
+            --blue:        #3b82f6;
+            --green:       #10b981;
+            --red:         #ef4444;
+            --purple:      #8b5cf6;
+            --yellow:      #f59e0b;
+            --dark-900:    #0d0f12;
+            --dark-800:    #151820;
+            --dark-700:    #1c2029;
+            --dark-600:    #232831;
+            --dark-500:    #2a303c;
+            --text:        #f0f2f5;
+            --text-dim:    #9aa1b0;
+            --text-muted:  #6b7280;
+            --border:      #2a303c;
+            --radius:      12px;
+            --radius-sm:   8px;
+            --radius-xs:   4px;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--dark-900);
+            color: var(--text);
+            line-height: 1.7;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ---- PRINT STYLES ---- */
+        @media print {
+            body { background: #fff; color: #1a1a1a; }
+            .guide-nav, .hero-actions, .back-to-top { display: none !important; }
+            .hero { background: #fff !important; border-bottom: 2px solid #ff6b35; }
+            .hero h1, .hero p { color: #1a1a1a !important; }
+            section { break-inside: avoid; }
+            .feature-card { border: 1px solid #ddd; background: #fafafa; }
+            .feature-card h3 { color: #1a1a1a; }
+            .step-card { border: 1px solid #ddd; }
+            .toc-link { color: #1a1a1a; }
+            .kbd { border: 1px solid #ccc; background: #eee; color: #333; }
+        }
+
+        /* ---- SCROLLBAR ---- */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--dark-900); }
+        ::-webkit-scrollbar-thumb { background: var(--dark-500); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--brand); }
+
+        /* ---- LAYOUT ---- */
+        .container { max-width: 900px; margin: 0 auto; padding: 0 2rem; }
+
+        /* ---- NAVIGATION ---- */
+        .guide-nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: rgba(13, 15, 18, 0.85);
+            backdrop-filter: blur(20px) saturate(1.5);
+            border-bottom: 1px solid var(--border);
+            transition: box-shadow 0.3s ease;
+        }
+        .guide-nav.scrolled { box-shadow: 0 4px 30px rgba(0,0,0,0.3); }
+        .guide-nav-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0.75rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .guide-nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 700;
+            font-size: 0.875rem;
+            color: var(--text);
+            text-decoration: none;
+        }
+        .guide-nav-brand img { height: 28px; width: auto; }
+        .guide-nav-links { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+        .guide-nav-links a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+        .guide-nav-links a:hover { color: var(--brand); background: var(--brand-soft); }
+
+        /* ---- HERO ---- */
+        .hero {
+            padding: 8rem 0 4rem;
+            text-align: center;
+            background: linear-gradient(180deg, rgba(255,107,53,0.06) 0%, transparent 70%);
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(255,107,53,0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--brand-soft);
+            border: 1px solid rgba(255,107,53,0.2);
+            color: var(--brand);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.375rem 1rem;
+            border-radius: 50px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 1.5rem;
+        }
+        .hero h1 {
+            font-size: clamp(2rem, 5vw, 3.25rem);
+            font-weight: 800;
+            line-height: 1.15;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--text) 0%, var(--text-dim) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--brand) 0%, var(--brand-light) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
+        .hero p {
+            font-size: 1.125rem;
+            color: var(--text-dim);
+            max-width: 560px;
+            margin: 0 auto 2rem;
+            line-height: 1.65;
+        }
+        .hero-version {
+            font-size: 0.8125rem;
+            color: var(--text-muted);
+            margin-top: 1rem;
+        }
+
+        /* ---- TABLE OF CONTENTS ---- */
+        .toc {
+            background: var(--dark-800);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 2rem;
+            margin: -2rem auto 3rem;
+            position: relative;
+            z-index: 1;
+        }
+        .toc h2 {
+            font-size: 1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            margin-bottom: 1.25rem;
+        }
+        .toc-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 0.5rem;
+        }
+        .toc-link {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.625rem 0.875rem;
+            border-radius: var(--radius-sm);
+            color: var(--text);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .toc-link:hover { background: var(--brand-soft); color: var(--brand); }
+        .toc-num {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--dark-600);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--brand);
+            flex-shrink: 0;
+        }
+
+        /* ---- SECTIONS ---- */
+        section {
+            padding: 4rem 0;
+            border-top: 1px solid var(--border);
+        }
+        section:first-of-type { border-top: none; }
+
+        .section-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--brand);
+            margin-bottom: 0.75rem;
+        }
+        .section-label .num {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--brand-soft);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.625rem;
+        }
+
+        h2 {
+            font-size: 1.75rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+            line-height: 1.2;
+        }
+        .section-desc {
+            color: var(--text-dim);
+            font-size: 1rem;
+            margin-bottom: 2rem;
+            max-width: 640px;
+        }
+
+        h3 {
+            font-size: 1.125rem;
+            font-weight: 700;
+            margin: 2rem 0 0.75rem;
+            color: var(--text);
+        }
+
+        p { margin-bottom: 1rem; color: var(--text-dim); font-size: 0.9375rem; }
+
+        /* ---- FEATURE CARDS ---- */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        .feature-card {
+            background: var(--dark-800);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            transition: all 0.25s ease;
+        }
+        .feature-card:hover {
+            border-color: rgba(255,107,53,0.3);
+            box-shadow: 0 4px 20px rgba(255,107,53,0.06);
+            transform: translateY(-2px);
+        }
+        .feature-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        .icon-orange  { background: rgba(255,107,53,0.12); }
+        .icon-blue    { background: rgba(59,130,246,0.12); }
+        .icon-green   { background: rgba(16,185,129,0.12); }
+        .icon-purple  { background: rgba(139,92,246,0.12); }
+        .icon-yellow  { background: rgba(245,158,11,0.12); }
+        .icon-red     { background: rgba(239,68,68,0.12); }
+        .feature-card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+        .feature-card p  { margin: 0; font-size: 0.8125rem; line-height: 1.6; }
+
+        /* ---- STEP CARDS (How-To) ---- */
+        .steps {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin: 1.5rem 0;
+            counter-reset: step-counter;
+        }
+        .step-card {
+            display: flex;
+            gap: 1.25rem;
+            padding: 1.25rem 1.5rem;
+            background: var(--dark-800);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            counter-increment: step-counter;
+            transition: border-color 0.2s ease;
+        }
+        .step-card:hover { border-color: rgba(255,107,53,0.25); }
+        .step-num {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--brand), var(--brand-light));
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.875rem;
+            flex-shrink: 0;
+        }
+        .step-content { flex: 1; }
+        .step-content h4 { font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--text); }
+        .step-content p  { margin: 0; font-size: 0.8125rem; }
+
+        /* ---- ANNOTATED SCREENSHOTS ---- */
+        .screenshot-block {
+            margin: 2rem 0;
+            background: var(--dark-800);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+        .screenshot-block .caption {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.8125rem;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .screenshot-placeholder {
+            background: linear-gradient(135deg, var(--dark-700), var(--dark-800));
+            padding: 3rem 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            min-height: 200px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            text-align: center;
+        }
+        .screenshot-placeholder .icon { font-size: 2rem; opacity: 0.5; }
+
+        /* ---- UI DIAGRAM (ASCII art replacement) ---- */
+        .ui-diagram {
+            background: var(--dark-800);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 0.75rem;
+            line-height: 1.6;
+            overflow-x: auto;
+            margin: 1.5rem 0;
+            color: var(--text-dim);
+        }
+        .ui-diagram .hl { color: var(--brand); font-weight: 600; }
+        .ui-diagram .bl { color: var(--blue); }
+        .ui-diagram .gr { color: var(--green); }
+        .ui-diagram .dim { color: var(--text-muted); }
+
+        /* ---- CALLOUT BOXES ---- */
+        .callout {
+            border-radius: var(--radius);
+            padding: 1rem 1.25rem;
+            margin: 1.25rem 0;
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-start;
+            font-size: 0.8125rem;
+            line-height: 1.65;
+        }
+        .callout-icon {
+            font-size: 1rem;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        .callout p { margin: 0; }
+        .callout-tip    { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); color: var(--text-dim); }
+        .callout-warn   { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); color: var(--text-dim); }
+        .callout-info   { background: rgba(59,130,246,0.08);  border: 1px solid rgba(59,130,246,0.2);  color: var(--text-dim); }
+        .callout strong { color: var(--text); }
+
+        /* ---- TABLES ---- */
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin: 1.5rem 0;
+            font-size: 0.8125rem;
+        }
+        thead th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            background: var(--dark-700);
+            color: var(--text);
+            font-weight: 600;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        thead th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+        thead th:last-child  { border-radius: 0 var(--radius-sm) 0 0; }
+        tbody td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+        tbody tr:hover td { background: var(--dark-800); }
+
+        /* ---- KEYBOARD SHORTCUTS ---- */
+        .kbd {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 24px;
+            padding: 2px 8px;
+            background: var(--dark-600);
+            border: 1px solid var(--dark-500);
+            border-radius: 4px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text);
+            box-shadow: 0 2px 0 var(--dark-500);
+        }
+
+        /* ---- BADGE ---- */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 50px;
+            font-size: 0.6875rem;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+        }
+        .badge-electron { background: rgba(139,92,246,0.15); color: #a78bfa; }
+        .badge-new      { background: rgba(16,185,129,0.15);  color: #34d399; }
+
+        /* ---- INLINE CODE ---- */
+        code {
+            background: var(--dark-700);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.8125em;
+            color: var(--brand-light);
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+
+        /* ---- FOOTER ---- */
+        .guide-footer {
+            padding: 3rem 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.8125rem;
+        }
+        .guide-footer .brand { color: var(--brand); font-weight: 600; }
+
+        /* ---- BACK TO TOP ---- */
+        .back-to-top {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: var(--brand);
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(255,107,53,0.3);
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.3s ease;
+            z-index: 999;
+            font-size: 1.25rem;
+        }
+        .back-to-top.visible { opacity: 1; transform: translateY(0); }
+        .back-to-top:hover { background: var(--brand-light); transform: translateY(-2px); }
+
+        /* ---- RESPONSIVE ---- */
+        @media (max-width: 768px) {
+            .container { padding: 0 1.25rem; }
+            .hero { padding: 6rem 0 3rem; }
+            .guide-nav-links { display: none; }
+            .feature-grid { grid-template-columns: 1fr; }
+            .toc-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ---- DIVIDER ---- */
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border), transparent);
+            margin: 1.5rem 0;
+        }
+
+        /* ---- WORKFLOW VISUAL ---- */
+        .workflow {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            margin: 1.5rem 0;
+            overflow-x: auto;
+            padding-bottom: 0.5rem;
+        }
+        .workflow-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            min-width: 120px;
+            text-align: center;
+        }
+        .workflow-step .circle {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--dark-700);
+            border: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            transition: all 0.2s;
+        }
+        .workflow-step:hover .circle { border-color: var(--brand); }
+        .workflow-step .label { font-size: 0.75rem; font-weight: 600; color: var(--text-dim); }
+        .workflow-arrow {
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            flex-shrink: 0;
+            padding: 0 0.25rem;
+        }
+    </style>
+</head>
+<body>
+
+<!-- FIXED NAV -->
+<nav class="guide-nav" id="guideNav">
+    <div class="guide-nav-inner">
+        <a href="#top" class="guide-nav-brand">
+            <img src="img/trakaweb-logo.png" alt="Traka">
+            Log Analyzer Guide
+        </a>
+        <div class="guide-nav-links">
+            <a href="#getting-started">Getting Started</a>
+            <a href="#log-viewer">Log Viewer</a>
+            <a href="#compare">Compare</a>
+            <a href="#issues">Issues</a>
+            <a href="#faqs">FAQs</a>
+            <a href="#settings">Settings</a>
+            <a href="#shortcuts">Shortcuts</a>
+        </div>
+    </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero" id="top">
+    <div class="container">
+        <div class="hero-badge">User Guide</div>
+        <h1>Traka <span>Log Analyzer</span></h1>
+        <p>Your complete guide to analysing, comparing, and troubleshooting Traka log files — faster and smarter than ever.</p>
+        <p class="hero-version">Part of the TrakaWEB Tools Suite &middot; Version 2.1</p>
+    </div>
+</header>
+
+<!-- TABLE OF CONTENTS -->
+<div class="container">
+    <div class="toc">
+        <h2>Contents</h2>
+        <div class="toc-grid">
+            <a href="#getting-started" class="toc-link"><span class="toc-num">1</span> Getting Started</a>
+            <a href="#log-viewer" class="toc-link"><span class="toc-num">2</span> Log Viewer</a>
+            <a href="#compare" class="toc-link"><span class="toc-num">3</span> Compare Files</a>
+            <a href="#issues" class="toc-link"><span class="toc-num">4</span> Issues &amp; Analytics</a>
+            <a href="#highlight-rules" class="toc-link"><span class="toc-num">5</span> Highlight Rules</a>
+            <a href="#faqs" class="toc-link"><span class="toc-num">6</span> FAQs / Knowledge Base</a>
+            <a href="#settings" class="toc-link"><span class="toc-num">7</span> Settings</a>
+            <a href="#shortcuts" class="toc-link"><span class="toc-num">8</span> Keyboard Shortcuts</a>
+            <a href="#tips" class="toc-link"><span class="toc-num">9</span> Tips &amp; Best Practices</a>
+        </div>
+    </div>
+</div>
+
+<main class="container">
+
+    <!-- ===========================
+         1. GETTING STARTED
+         =========================== -->
+    <section id="getting-started">
+        <div class="section-label"><span class="num">1</span> Getting Started</div>
+        <h2>Loading Your Log Files</h2>
+        <p class="section-desc">Get your log files into the analyzer in seconds. There are multiple ways to load files depending on how you're running the tool.</p>
+
+        <h3>Typical Workflow</h3>
+        <div class="workflow">
+            <div class="workflow-step">
+                <div class="circle">📂</div>
+                <span class="label">Load Files</span>
+            </div>
+            <span class="workflow-arrow">&#x279C;</span>
+            <div class="workflow-step">
+                <div class="circle">🔍</div>
+                <span class="label">View &amp; Search</span>
+            </div>
+            <span class="workflow-arrow">&#x279C;</span>
+            <div class="workflow-step">
+                <div class="circle">📊</div>
+                <span class="label">Compare</span>
+            </div>
+            <span class="workflow-arrow">&#x279C;</span>
+            <div class="workflow-step">
+                <div class="circle">⚠️</div>
+                <span class="label">Review Issues</span>
+            </div>
+            <span class="workflow-arrow">&#x279C;</span>
+            <div class="workflow-step">
+                <div class="circle">✅</div>
+                <span class="label">Resolve</span>
+            </div>
+        </div>
+
+        <h3>How to Load Files</h3>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon icon-orange">📁</div>
+                <h3>Drag &amp; Drop</h3>
+                <p>Drag <code>.log</code>, <code>.txt</code>, or <code>.cfg</code> files onto the Home page drop zone. The fastest way to get started.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-blue">🖱️</div>
+                <h3>Browse Files</h3>
+                <p>Click the drop zone or use the <strong>Browse Files</strong> button to open a file picker. Select one or multiple files at once.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-purple">🔎</div>
+                <h3>Auto-Discovery <span class="badge badge-electron">Desktop</span></h3>
+                <p>In the Desktop edition, click <strong>Scan Traka Directories</strong> to automatically find and load logs from standard Traka installation paths.</p>
+            </div>
+        </div>
+
+        <div class="callout callout-tip">
+            <span class="callout-icon">💡</span>
+            <p><strong>Tip:</strong> When loading multiple files, the analyzer automatically sorts them by engine priority — Business Engine first, then Comms, Integration, and Plugins — so your most important logs are always front and centre.</p>
+        </div>
+
+        <h3>The Navigation Sidebar</h3>
+        <p>The sidebar on the left gives you quick access to every page. It also shows how many files are loaded and how many issues have been detected.</p>
+        <p>Need more screen space? Click the <strong>collapse button</strong> (the arrow at the bottom of the sidebar) to shrink it to icons only. Hover over any icon to see its label as a tooltip. Click again to expand.</p>
+    </section>
+
+    <!-- ===========================
+         2. LOG VIEWER
+         =========================== -->
+    <section id="log-viewer">
+        <div class="section-label"><span class="num">2</span> Log Viewer</div>
+        <h2>Viewing Log Files</h2>
+        <p class="section-desc">The Log Viewer is your primary workspace for reading, searching, and filtering a single log file at a time.</p>
+
+        <h3>Selecting a File</h3>
+        <p>Use the dropdown at the top of the viewer to switch between loaded files. The viewer instantly renders the selected file with colour-coded log levels.</p>
+
+        <h3>Log Level Colours</h3>
+        <table>
+            <thead>
+                <tr><th>Level</th><th>Colour</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>Error</strong></td><td style="color:#ef4444;">Red</td><td>Errors, exceptions, failures, and critical issues</td></tr>
+                <tr><td><strong>Warning</strong></td><td style="color:#f59e0b;">Amber</td><td>Warnings that may need attention</td></tr>
+                <tr><td><strong>Info</strong></td><td style="color:#3b82f6;">Blue</td><td>Informational messages and routine operations</td></tr>
+                <tr><td><strong>Debug</strong></td><td style="color:#6b7280;">Grey</td><td>Verbose debug and trace output</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Toolbar Features</h3>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon icon-orange">🔍</div>
+                <h3>Search</h3>
+                <p>Type any text or regex pattern (<code>/pattern/</code>) to find matches. Use the arrow buttons or <span class="kbd">Enter</span> / <span class="kbd">Shift</span>+<span class="kbd">Enter</span> to jump between matches.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-green">📡</div>
+                <h3>Live Tail</h3>
+                <p>Monitor a log file in real time. New lines appear at the bottom with a subtle highlight animation — just like tailing a file in a terminal, but visual. <span class="badge badge-electron">Desktop</span></p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-blue">🔗</div>
+                <h3>Stitch Files</h3>
+                <p>Merge multiple log files into a single, chronologically sorted timeline. Each source file gets its own colour label so you can always see where a line came from.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-yellow">🎨</div>
+                <h3>Highlight Rules</h3>
+                <p>Create custom colour rules (like BareTail) to visually flag specific keywords or phrases. Full details in the <a href="#highlight-rules" style="color:var(--brand);">Highlight Rules section</a>.</p>
+            </div>
+        </div>
+
+        <h3>Filtering Logs</h3>
+        <p>Below the search bar, you'll find filter chips to narrow down what's shown:</p>
+        <ul style="margin: 0.75rem 0 1rem 1.25rem; color: var(--text-dim); font-size: 0.9rem;">
+            <li><strong>Log Level:</strong> All, Error, Warning, Info, Debug</li>
+            <li><strong>Engine Type:</strong> Business, Comms, Integration</li>
+            <li><strong>Time Range:</strong> Set "From" and "To" date/time to view a specific window</li>
+        </ul>
+
+        <h3>Footer Controls</h3>
+        <p>At the bottom of the viewer you'll find the <strong>date sort toggle</strong> (Original Order, Oldest First, Newest First), a <strong>Go to Line</strong> input, and a <strong>Fullscreen</strong> button.</p>
+    </section>
+
+    <!-- ===========================
+         3. COMPARE
+         =========================== -->
+    <section id="compare">
+        <div class="section-label"><span class="num">3</span> Compare Files</div>
+        <h2>Side-by-Side Comparison</h2>
+        <p class="section-desc">View multiple log files at once. Scroll them in sync, highlight differences, search across all files simultaneously, and use time-based synchronisation to correlate events.</p>
+
+        <h3>Getting Files into Compare</h3>
+        <p>Drag files onto the Compare page, or use the <strong>Add Files</strong> button. Files loaded from the Home page are also available here. Each file gets its own scrollable panel.</p>
+
+        <h3>Compare Toolbar</h3>
+        <div class="steps">
+            <div class="step-card">
+                <div class="step-num">1</div>
+                <div class="step-content">
+                    <h4>Sync Scroll</h4>
+                    <p>Lock all panels so they scroll together. Invaluable when you want to read through multiple files at the same pace.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">2</div>
+                <div class="step-content">
+                    <h4>Time Sync</h4>
+                    <p>Click any line with a timestamp and every other panel jumps to the same moment in time. Use the <strong>Time Window</strong> slider (1–60 seconds) to control how close a match needs to be. Press <span class="kbd">T</span> to collapse the panel when you need more space.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">3</div>
+                <div class="step-content">
+                    <h4>Highlight Differences</h4>
+                    <p>Compares every line across files and colours them: <strong style="color:#ef4444;">red</strong> for lines unique to one file, <strong style="color:#3b82f6;">blue</strong> for lines that appear in multiple files. Best used when comparing two versions of the <em>same</em> file (e.g., two config files, or the same log from before and after a change).</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">4</div>
+                <div class="step-content">
+                    <h4>Search Across All Logs</h4>
+                    <p>Type in the search bar to highlight matching text across every panel in real time. Toggle the <strong>filter button</strong> (funnel icon) to switch between <em>highlight mode</em> (show all lines, highlight matches) and <em>filter mode</em> (show only matching lines).</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">5</div>
+                <div class="step-content">
+                    <h4>Layout &amp; Fullscreen</h4>
+                    <p>Switch between side-by-side, tiled (2&times;2 grid), and horizontal layouts. Hit <strong>Fullscreen</strong> to use the entire screen for comparison.</p>
+                </div>
+            </div>
+        </div>
+
+        <h3>Panel Controls</h3>
+        <p>Each file panel has three buttons in its header:</p>
+        <table>
+            <thead>
+                <tr><th>Button</th><th>What It Does</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>Minimize</strong></td><td>Collapses the panel into a floating dock at the bottom. The remaining panels grow to fill the space. Click the chip in the dock to restore it, or use <strong>Restore All</strong>.</td></tr>
+                <tr><td><strong>Maximize</strong></td><td>Expands this panel to fill the entire compare area. Press <span class="kbd">Esc</span> to return to normal view.</td></tr>
+                <tr><td><strong>Remove</strong></td><td>Removes the file from the comparison entirely.</td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-info">
+            <span class="callout-icon">ℹ️</span>
+            <p><strong>Time Sync panel space:</strong> When the Time Sync panel at the bottom is collapsed, the log panels automatically grow to use the freed space. Expand it again and they smoothly resize.</p>
+        </div>
+    </section>
+
+    <!-- ===========================
+         4. ISSUES & ANALYTICS
+         =========================== -->
+    <section id="issues">
+        <div class="section-label"><span class="num">4</span> Issues &amp; Analytics</div>
+        <h2>Automatic Issue Detection</h2>
+        <p class="section-desc">The analyzer scans every loaded log file for known error patterns and presents them with severity ratings, context, and — where available — resolution steps.</p>
+
+        <h3>Issue Severity Levels</h3>
+        <table>
+            <thead>
+                <tr><th>Severity</th><th>Colour</th><th>Example</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>Critical</strong></td><td style="color:#dc2626;">Dark Red</td><td>Fatal errors, out-of-memory, stack overflows</td></tr>
+                <tr><td><strong>Error</strong></td><td style="color:#ef4444;">Red</td><td>Exceptions, connection failures, timeouts</td></tr>
+                <tr><td><strong>Warning</strong></td><td style="color:#f59e0b;">Amber</td><td>Deprecated settings, retry attempts</td></tr>
+                <tr><td><strong>Performance</strong></td><td style="color:#8b5cf6;">Purple</td><td>Slow queries, high memory usage</td></tr>
+            </tbody>
+        </table>
+
+        <p>Click any issue to see its details and the exact log line it was found on. If a known solution exists, you'll see resolution steps you can follow — complete with prerequisites and commands where applicable.</p>
+
+        <h3>Analytics Dashboard</h3>
+        <p>The <strong>Analytics</strong> page gives you a visual overview of your issues:</p>
+        <ul style="margin: 0.75rem 0 1rem 1.25rem; color: var(--text-dim); font-size: 0.9rem;">
+            <li><strong>Issue Distribution</strong> — breakdown by severity</li>
+            <li><strong>Issues Over Time</strong> — plotted by hour, minute, or file</li>
+            <li><strong>Most Common Issues</strong> — the top 10 recurring patterns</li>
+            <li><strong>Critical Findings &amp; Recommendations</strong> — AI-powered insights</li>
+        </ul>
+
+        <div class="callout callout-tip">
+            <span class="callout-icon">💡</span>
+            <p><strong>Export:</strong> Use the <strong>Export Report</strong> button on the Issues page or <strong>Export PDF Report</strong> on the Solutions panel to generate a shareable document for your team.</p>
+        </div>
+    </section>
+
+    <!-- ===========================
+         5. HIGHLIGHT RULES
+         =========================== -->
+    <section id="highlight-rules">
+        <div class="section-label"><span class="num">5</span> Highlight Rules</div>
+        <h2>Custom Text Highlighting</h2>
+        <p class="section-desc">Create BareTail-style colour rules that flag specific keywords or phrases in your logs — in the Viewer, in Compare, and during Live Tail.</p>
+
+        <h3>Creating a Rule</h3>
+        <div class="steps">
+            <div class="step-card">
+                <div class="step-num">1</div>
+                <div class="step-content">
+                    <h4>Open the Modal</h4>
+                    <p>Click <strong>Highlight Rules</strong> on the Log Viewer or Compare toolbar.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">2</div>
+                <div class="step-content">
+                    <h4>Define the Pattern</h4>
+                    <p>Type the text you want to highlight (e.g., <code>timeout</code> or <code>SQL Exception</code>). Toggle case sensitivity if needed.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">3</div>
+                <div class="step-content">
+                    <h4>Pick Colours</h4>
+                    <p>Choose a <strong>text colour</strong> and <strong>background colour</strong>. The live preview updates as you adjust. For example: black text on a yellow background makes warnings impossible to miss.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">4</div>
+                <div class="step-content">
+                    <h4>Choose Target Files</h4>
+                    <p>Select <strong>All Files</strong> to apply everywhere, or pick specific files. Useful when a keyword means different things in different engines.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">5</div>
+                <div class="step-content">
+                    <h4>Add &amp; Done</h4>
+                    <p>Click <strong>Add Rule</strong> to save. Add as many rules as you need. Click <strong>Done</strong> to close and apply them to your logs.</p>
+                </div>
+            </div>
+        </div>
+
+        <p>Rules are saved in your browser, so they persist between sessions. You can enable/disable, edit, or delete individual rules at any time.</p>
+    </section>
+
+    <!-- ===========================
+         6. FAQs / KNOWLEDGE BASE
+         =========================== -->
+    <section id="faqs">
+        <div class="section-label"><span class="num">6</span> FAQs / Knowledge Base</div>
+        <h2>Built-In Troubleshooting Guide</h2>
+        <p class="section-desc">Even if an issue isn't in your current log files, the FAQs page gives you a searchable knowledge base of known Traka problems and their solutions.</p>
+
+        <h3>How to Use</h3>
+        <p>Navigate to <strong>FAQs</strong> in the sidebar. Every known issue pattern is listed as an expandable card showing:</p>
+        <ul style="margin: 0.75rem 0 1rem 1.25rem; color: var(--text-dim); font-size: 0.9rem;">
+            <li><strong>Severity &amp; Category</strong> — at a glance, via colour-coded badges</li>
+            <li><strong>"Detected in Logs"</strong> badge — if this issue was actually found in your loaded files</li>
+            <li><strong>Why it happens</strong> — plain-English explanation</li>
+            <li><strong>Prerequisites</strong> — what you need before attempting the fix</li>
+            <li><strong>Resolution Steps</strong> — numbered, actionable steps (with commands where relevant)</li>
+            <li><strong>Related Issues</strong> — quick links to related FAQ entries</li>
+        </ul>
+
+        <p>Use the <strong>search bar</strong> to find entries by keyword, or the <strong>category buttons</strong> (Configuration, Security, Database, etc.) to filter by type.</p>
+
+        <div class="callout callout-info">
+            <span class="callout-icon">ℹ️</span>
+            <p><strong>The FAQs are a living reference.</strong> They include solutions for issues you might encounter in the future — not just what's in today's log files. Use it proactively when troubleshooting.</p>
+        </div>
+    </section>
+
+    <!-- ===========================
+         7. SETTINGS
+         =========================== -->
+    <section id="settings">
+        <div class="section-label"><span class="num">7</span> Settings</div>
+        <h2>Configuration</h2>
+        <p class="section-desc">Fine-tune the analyzer's behaviour to match your preferences.</p>
+
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon icon-orange">⚙️</div>
+                <h3>Detection Options</h3>
+                <p>Toggle which types of issues the analyzer looks for — errors, warnings, performance problems, and custom patterns.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-blue">🖥️</div>
+                <h3>Display Settings</h3>
+                <p>Adjust font size for the log viewer to suit your screen and reading preference.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon icon-purple">📂</div>
+                <h3>Log Directories <span class="badge badge-electron">Desktop</span></h3>
+                <p>Configure which directories the auto-scanner searches. Add custom paths for non-standard Traka installations.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===========================
+         8. KEYBOARD SHORTCUTS
+         =========================== -->
+    <section id="shortcuts">
+        <div class="section-label"><span class="num">8</span> Keyboard Shortcuts</div>
+        <h2>Keyboard Shortcuts</h2>
+        <p class="section-desc">Speed up your workflow with these keyboard shortcuts.</p>
+
+        <table>
+            <thead>
+                <tr><th>Shortcut</th><th>Action</th><th>Where</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><span class="kbd">Enter</span></td><td>Jump to next search match</td><td>Log Viewer search</td></tr>
+                <tr><td><span class="kbd">Shift</span> + <span class="kbd">Enter</span></td><td>Jump to previous search match</td><td>Log Viewer search</td></tr>
+                <tr><td><span class="kbd">Escape</span></td><td>Clear search / exit fullscreen / restore maximised panel</td><td>Global</td></tr>
+                <tr><td><span class="kbd">T</span></td><td>Toggle Time Sync panel collapse/expand</td><td>Compare (when Time Sync is active)</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- ===========================
+         9. TIPS & BEST PRACTICES
+         =========================== -->
+    <section id="tips">
+        <div class="section-label"><span class="num">9</span> Tips &amp; Best Practices</div>
+        <h2>Getting the Most Out of the Analyzer</h2>
+        <p class="section-desc">A few recommendations from the team that built it.</p>
+
+        <div class="steps">
+            <div class="step-card">
+                <div class="step-num">💡</div>
+                <div class="step-content">
+                    <h4>Start with Auto-Discovery</h4>
+                    <p>If you're using the Desktop edition on a Traka server, let the auto-scanner find your logs. It picks the newest file from each engine automatically — no hunting through folders.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">💡</div>
+                <div class="step-content">
+                    <h4>Use Time Sync for Correlation</h4>
+                    <p>When an event in one engine triggers a problem in another, Time Sync is your best friend. Click a timestamp and watch all panels jump to the same moment.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">💡</div>
+                <div class="step-content">
+                    <h4>Highlight Rules for Recurring Investigations</h4>
+                    <p>If you regularly look for the same keywords (e.g., a specific door controller ID or user name), set up highlight rules. They persist between sessions, so they're always ready.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">💡</div>
+                <div class="step-content">
+                    <h4>Stitch for Chronological Analysis</h4>
+                    <p>When you need to understand the sequence of events across multiple engines, stitch the files together into a single timeline. Colour labels show which engine each line came from.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">💡</div>
+                <div class="step-content">
+                    <h4>Check the FAQs First</h4>
+                    <p>Before diving deep into a log file, check the FAQs page. The issue you're seeing might already have a known solution with step-by-step instructions.</p>
+                </div>
+            </div>
+            <div class="step-card">
+                <div class="step-num">💡</div>
+                <div class="step-content">
+                    <h4>Collapse the Sidebar for More Space</h4>
+                    <p>When you're deep in log analysis, collapse the sidebar to give your log panels maximum width. Everything on the page scales smoothly to fill the space.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="callout callout-warn">
+            <span class="callout-icon">⚠️</span>
+            <p><strong>File size note:</strong> The analyzer runs entirely in your browser. Very large log files (50 MB+) may take a moment to load and render. The loading animation will keep you informed.</p>
+        </div>
+    </section>
+
+</main>
+
+<!-- FOOTER -->
+<footer class="guide-footer">
+    <div class="container">
+        <p><span class="brand">Traka Log Analyzer</span> — Part of the TrakaWEB Tools Suite</p>
+        <p style="margin-top:0.5rem;">&copy; 2026 Traka, an ASSA ABLOY company. All rights reserved.</p>
+    </div>
+</footer>
+
+<!-- BACK TO TOP -->
+<button class="back-to-top" id="backToTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Back to top">&#x2191;</button>
+
+<script>
+    // Sticky nav shadow
+    const nav = document.getElementById('guideNav');
+    window.addEventListener('scroll', () => {
+        nav.classList.toggle('scrolled', window.scrollY > 10);
+        document.getElementById('backToTop').classList.toggle('visible', window.scrollY > 400);
+    });
+</script>
+
+</body>
+</html>

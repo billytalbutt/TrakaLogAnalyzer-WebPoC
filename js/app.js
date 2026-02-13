@@ -43,6 +43,48 @@ if (isElectron) {
         }
     });
     
+    // Live tail push-based updates from main process file watchers (bonus accelerator)
+    window.electronAPI.onFileTailUpdate((data) => {
+        if (!state.liveTailActive) return;
+        console.log(`[LiveTail PUSH] ${data.name}: +${data.newContent.length} bytes`);
+        const fileData = state.files.find(f => f.path === data.path || f.name === data.name);
+        if (fileData && data.newContent) {
+            const newLines = data.newContent.split('\n').filter(line => line.trim());
+            if (newLines.length > 0) {
+                // Update byte offset so polling doesn't re-read the same content
+                state.lastReadPositions.set(fileData.name, data.newOffset);
+                // Append new content efficiently
+                appendNewContentLive(fileData, data.newContent, newLines);
+            }
+        }
+    });
+    
+    window.electronAPI.onFileTailReset((data) => {
+        if (!state.liveTailActive) return;
+        const fileData = state.files.find(f => f.path === data.path || f.name === data.name);
+        if (fileData) {
+            // File was rotated/truncated - reload entire content
+            fileData.content = data.content;
+            fileData.lines = data.content.split('\n');
+            fileData.size = data.content.length;
+            state.lastReadPositions.set(fileData.name, data.newOffset);
+            parseLogFile(fileData);
+            detectIssues(fileData);
+            
+            // Full re-render needed for reset
+            const currentFile = state.files[state.currentFileIndex];
+            if (currentFile && currentFile.name === fileData.name) {
+                displayLog(fileData);
+            }
+            const comparePage = document.getElementById('page-compare');
+            if (comparePage && comparePage.classList.contains('active')) {
+                updateCompareView();
+            }
+            updateUI();
+            showToast(`${fileData.name} was rotated - reloaded`, 'warning');
+        }
+    });
+    
     window.electronAPI.onFileRemoved((data) => {
         console.log('File removed:', data.name);
         showToast(`Log file removed: ${data.name}`, 'warning');
@@ -64,6 +106,20 @@ async function scanTrakaLogs() {
         btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg> Scanning...';
     }
     
+    // Show loading overlay so user gets visual feedback during scan
+    showGlobalLoader('Scanning Traka Directories...', 'Searching for log files in default Traka paths');
+    
+    // Clear previously loaded files so we always get a fresh set of newest logs.
+    // Without this, stale files from a previous scan persist alongside the new ones.
+    if (state.liveTailActive) {
+        await stopLiveTail();
+    }
+    state.files = [];
+    state.currentFileIndex = -1;
+    state.parsedLogs.clear();
+    state.issues = [];
+    state.lastReadPositions.clear();
+    
     try {
         const result = await window.electronAPI.scanTrakaLogs();
         
@@ -71,20 +127,25 @@ async function scanTrakaLogs() {
             electronState.scannedFiles = result.files;
             
             if (result.files.length === 0) {
+                hideGlobalLoader();
                 showToast('No log files found in Traka directories', 'warning');
                 updateDiscoveryStatus(`Scanned ${result.scannedPaths.length} directories - No log files found`);
             } else {
-                showToast(`Found ${result.totalFiles} log files in ${result.scannedPaths.length} directories`, 'success');
+                updateGlobalLoaderText('Loading Log Files...', `Found ${result.totalFiles} files — loading them now`);
                 updateDiscoveryStatus(`Found ${result.totalFiles} log files`);
                 
-                // Show file selection modal
-                showFileSelectionModal(result.files, result.scannedPaths);
+                // Automatically load all discovered files in correct order
+                await autoLoadDiscoveredFilesForCompare(result.files);
+                hideGlobalLoader();
+                showToast(`Found ${result.totalFiles} log files - loaded successfully`, 'success');
             }
         } else {
+            hideGlobalLoader();
             showToast(`Scan failed: ${result.error}`, 'error');
             updateDiscoveryStatus('Scan failed');
         }
     } catch (error) {
+        hideGlobalLoader();
         console.error('Scan error:', error);
         showToast('Error scanning directories', 'error');
         updateDiscoveryStatus('Error occurred');
@@ -109,7 +170,11 @@ async function selectCustomDirectory() {
         const result = await window.electronAPI.showDirectoryPicker();
         
         if (result.success && result.path) {
+            showGlobalLoader('Scanning Directory...', result.path);
+            
             const scanResult = await window.electronAPI.scanDirectory(result.path);
+            
+            hideGlobalLoader();
             
             if (scanResult.success) {
                 electronState.scannedFiles = scanResult.files;
@@ -125,6 +190,7 @@ async function selectCustomDirectory() {
             }
         }
     } catch (error) {
+        hideGlobalLoader();
         console.error('Directory selection error:', error);
         showToast('Error selecting directory', 'error');
     }
@@ -143,60 +209,99 @@ async function openElectronFilePicker() {
         const result = await window.electronAPI.showFilePicker();
         
         if (result.success && result.paths && result.paths.length > 0) {
-            showToast(`Loading ${result.paths.length} file(s)...`, 'info');
+            showGlobalLoader('Loading Files...', `Loading ${result.paths.length} file(s)`);
             
+            let loadedCount = 0;
             for (const filePath of result.paths) {
+                const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || filePath;
+                updateGlobalLoaderText('Loading Files...', `Loading ${fileName} (${loadedCount + 1}/${result.paths.length})`);
                 await loadFileFromPath(filePath);
+                loadedCount++;
             }
             
+            hideGlobalLoader();
             showToast(`Successfully loaded ${result.paths.length} file(s)`, 'success');
         }
     } catch (error) {
+        hideGlobalLoader();
         console.error('File picker error:', error);
         showToast('Error loading files', 'error');
     }
 }
 
 /**
- * Load a file from file system path (Electron only)
+ * Load a file from file system path (Electron only).
+ * @param {string} filePath - Full path to the log file
+ * @param {string|null} engineType - Optional engine type label (e.g. 'Business Engine')
+ *   Used to create a unique display name when multiple directories contain
+ *   identically-named files like Debugging_Log.txt.
  */
-async function loadFileFromPath(filePath) {
+async function loadFileFromPath(filePath, engineType = null) {
     if (!isElectron) return;
     
     try {
         const result = await window.electronAPI.readLogFile(filePath);
         
         if (result.success) {
-            // Create a file-like object to use with existing loadFile function
-            const fileObj = {
-                name: result.name,
-                size: result.size,
-                lastModified: new Date(result.modified).getTime(),
-                content: result.content,
-                path: result.path
-            };
+            const isConfig = result.name.endsWith('.cfg');
+            const lines = result.content.split('\n');
             
-            // Process the file content using existing logic
-            const isConfig = fileObj.name.endsWith('.cfg');
-            const fileData = {
-                name: fileObj.name,
-                size: fileObj.size,
-                lastModified: new Date(fileObj.lastModified),
-                content: fileObj.content,
-                lines: fileObj.content.split('\n'),
-                type: isConfig ? 'config' : 'log',
-                path: fileObj.path
-            };
-            
-            // Add to state and process
-            state.files.push(fileData);
-            state.parsedLogs.set(fileData.name, fileData.lines);
-            
-            if (!isConfig) {
-                parseAndDetectIssues(fileData);
+            // Create a unique name for the file. Generic filenames like
+            // "Debugging_Log.txt" appear in every Traka engine directory,
+            // so we prefix with the engine type to prevent collisions in
+            // state.files, lastReadPositions, parsedLogs, and issues.
+            let uniqueName = result.name;
+            if (engineType) {
+                const genericNames = ['debugging_log.txt', 'debugging_log.log'];
+                if (genericNames.includes(result.name.toLowerCase())) {
+                    uniqueName = `${engineType} - ${result.name}`;
+                }
             }
             
+            const fileData = {
+                name: uniqueName,
+                originalName: result.name,  // Keep original for path operations
+                size: result.size,
+                lastModified: new Date(result.modified),
+                content: result.content,
+                lines: lines,
+                isConfig: isConfig,
+                path: result.path,
+                engineType: engineType || null
+            };
+            
+            // Diagnostic logging
+            const firstLine = lines[0] ? lines[0].substring(0, 80) : '(empty)';
+            const lastLine = lines.length > 1 ? lines[lines.length - 2].substring(0, 80) : '(empty)';
+            console.log(`[LoadFile] ${uniqueName}: ${result.size} bytes, ${lines.length} lines, modified: ${result.modified}`);
+            console.log(`[LoadFile]   Path: ${result.path}`);
+            console.log(`[LoadFile]   First: ${firstLine}`);
+            console.log(`[LoadFile]   Last:  ${lastLine}`);
+            
+            // Initialize last read position for live tail (byte offset)
+            // Use the unique name so different engine logs don't collide
+            state.lastReadPositions.set(uniqueName, result.size);
+            
+            // Deduplicate by path (most reliable) or by unique name
+            const existingIndex = state.files.findIndex(f => f.path === result.path);
+            if (existingIndex >= 0) {
+                state.files[existingIndex] = fileData;
+            } else {
+                state.files.push(fileData);
+            }
+            
+            // Parse and analyze (skip issue detection for config files)
+            parseLogFile(fileData);
+            if (!isConfig) {
+                detectIssues(fileData);
+            }
+            
+            // Update UI components
             updateUI();
+            updateFileDropdown();
+            updateFilesList();
+            updateCompareView();
+            
             return fileData;
         } else {
             throw new Error(result.error);
@@ -308,6 +413,34 @@ function deselectAllDiscoveredFiles() {
     document.querySelectorAll('.discovered-file-checkbox').forEach(cb => cb.checked = false);
 }
 
+/**
+ * Sort files by engine type priority for consistent loading order
+ * Priority: Business Engine → Comms Engine → Integration Engine → Plugins
+ */
+function sortFilesForCompare(files) {
+    const order = {
+        'Business Engine': 1,
+        'Comms Engine': 2,
+        'TrakaWEB': 3,
+        'Integration Engine Service': 4,
+        'Integration Monitor': 5,
+        'SiPass Integration': 6,
+        'OnGuard Integration': 7,
+        'CCure Integration': 8,
+        'PostBox Integration': 9,
+        'Active Directory Integration': 10,
+        'Symmetry Integration': 11,
+        'Lenel Integration': 12,
+        'Integration Log': 13
+    };
+    
+    return files.sort((a, b) => {
+        const orderA = order[a.engineType] || 999;
+        const orderB = order[b.engineType] || 999;
+        return orderA - orderB;
+    });
+}
+
 async function loadSelectedDiscoveredFiles() {
     const checkboxes = document.querySelectorAll('.discovered-file-checkbox:checked');
     const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.value));
@@ -318,20 +451,67 @@ async function loadSelectedDiscoveredFiles() {
     }
     
     closeFileSelectionModal();
-    showToast(`Loading ${selectedIndices.length} file(s)...`, 'info');
+    
+    // Show loading overlay during file loading
+    showGlobalLoader('Loading Log Files...', `Loading ${selectedIndices.length} file(s)`);
+    
+    // Sort files by engine type priority (Business → Comms → Integration → Plugins)
+    const selectedFiles = selectedIndices.map(idx => electronState.scannedFiles[idx]);
+    const sortedFiles = sortFilesForCompare(selectedFiles);
     
     let loadedCount = 0;
-    for (const idx of selectedIndices) {
-        const file = electronState.scannedFiles[idx];
+    for (const file of sortedFiles) {
         if (file) {
-            const result = await loadFileFromPath(file.path);
+            updateGlobalLoaderText('Loading Log Files...', `Loading ${file.name} (${loadedCount + 1}/${sortedFiles.length})`);
+            const result = await loadFileFromPath(file.path, file.engineType || null);
+            if (result) loadedCount++;
+        }
+    }
+    
+    hideGlobalLoader();
+    
+    if (loadedCount > 0) {
+        // Ensure the first file is selected for the viewer
+        if (state.currentFileIndex === -1 && state.files.length > 0) {
+            state.currentFileIndex = 0;
+        }
+        showToast(`Successfully loaded ${loadedCount} file(s) - ready for viewing and comparison`, 'success');
+        navigateTo('viewer');
+    }
+}
+
+/**
+ * Automatically load discovered files for compare view
+ * Loads all files in the correct order: Business Engine → Comms Engine → Integration Engine → Integration Modules
+ */
+async function autoLoadDiscoveredFilesForCompare(files) {
+    if (!files || files.length === 0) {
+        showToast('No files to load', 'warning');
+        return;
+    }
+    
+    // Sort files by engine type priority (Business → Comms → Integration → Plugins)
+    const sortedFiles = sortFilesForCompare(files);
+    
+    let loadedCount = 0;
+    for (const file of sortedFiles) {
+        if (file) {
+            // Update loader text with progress (caller already shows the global loader)
+            updateGlobalLoaderText('Loading Log Files...', `Loading ${file.name} (${loadedCount + 1}/${sortedFiles.length})`);
+            const result = await loadFileFromPath(file.path, file.engineType || null);
             if (result) loadedCount++;
         }
     }
     
     if (loadedCount > 0) {
-        showToast(`Successfully loaded ${loadedCount} file(s)`, 'success');
-        navigateTo('viewer');
+        // Ensure the first file is selected for the viewer when the user visits it
+        if (state.currentFileIndex === -1 && state.files.length > 0) {
+            state.currentFileIndex = 0;
+        }
+        // Navigate to compare view to see files side-by-side
+        navigateTo('compare');
+    } else {
+        showToast('Failed to load any files', 'error');
     }
 }
 
@@ -509,6 +689,7 @@ const state = {
     activeFilter: 'all',
     activeCategory: 'all',
     syncScroll: false,
+    compareLayout: 'grid', // 'grid' (default 2x2 for 4 files) or 'horizontal' (side-by-side single row)
     liveTailActive: false,
     liveTailInterval: null,
     liveTailFileHandles: new Map(), // Store file handles for live monitoring
@@ -521,6 +702,9 @@ const state = {
     stitchedFiles: [], // Files selected for stitching
     stitchedData: null, // Merged log data
     dateSortOrder: 'none', // Date sorting: 'none', 'asc', 'desc'
+    highlightRules: [], // Custom text highlighting rules (BareTail-style)
+    minimizedPanels: new Set(), // Track minimized compare panels by file index
+    compareSearchFilterMode: false, // false = highlight mode, true = filter (show matches only)
     engineFilters: {
         business: false,
         comms: false,
@@ -605,22 +789,73 @@ const issuePatterns = [
 // ============================================
 // DOM Ready
 // ============================================
-document.addEventListener('DOMContentLoaded', () => {
-    initNavigation();
-    initFileDropZone();
-    initFileInputs();
-    initSearch();
-    initFilters();
-    initSettings();
-    loadSettings();
-    updateUI();
-    initScrollSync(); // Initialize scroll synchronization for line numbers
+function initializeApp() {
+    console.log('🚀 Starting app initialization...');
     
-    // Initialize Electron-specific features
-    if (isElectron) {
-        initElectronUI();
+    try {
+        console.log('  ✓ Initializing navigation...');
+        initNavigation();
+        
+        console.log('  ✓ Initializing file drop zone...');
+        initFileDropZone();
+        
+        console.log('  ✓ Initializing file inputs...');
+        initFileInputs();
+        
+        console.log('  ✓ Initializing search...');
+        initSearch();
+        
+        console.log('  ✓ Initializing filters...');
+        initFilters();
+        
+        console.log('  ✓ Initializing settings...');
+        initSettings();
+        
+        console.log('  ✓ Loading settings...');
+        loadSettings();
+        
+        console.log('  ✓ Loading highlight rules...');
+        loadHighlightRules(); // Load saved highlight rules
+        
+        console.log('  ✓ Updating UI...');
+        updateUI();
+        
+        console.log('  ✓ Initializing scroll sync...');
+        initScrollSync(); // Initialize scroll synchronization for line numbers
+        
+        console.log('  ✓ Restoring compare layout preference...');
+        restoreCompareLayoutPreference();
+        
+        // Initialize solution cards system
+        if (typeof initializeSolutionsPanel === 'function') {
+            console.log('  ✓ Initializing solutions panel...');
+            initializeSolutionsPanel();
+        }
+        
+        // Initialize Electron-specific features
+        if (isElectron) {
+            console.log('  ✓ Initializing Electron features...');
+            initElectronUI();
+        }
+        
+        console.log('✅ App initialization complete!');
+    } catch (error) {
+        console.error('❌ Error during initialization:', error);
+        console.error('Stack trace:', error.stack);
+        // Still try to make the app somewhat functional
+        alert('App initialization error: ' + error.message + '\nCheck console for details.');
     }
-});
+}
+
+// Check if DOM is already loaded, otherwise wait for DOMContentLoaded
+if (document.readyState === 'loading') {
+    console.log('📋 DOM still loading, waiting for DOMContentLoaded...');
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    console.log('📋 DOM already loaded, initializing immediately...');
+    // DOM is already loaded, initialize immediately
+    initializeApp();
+}
 
 // ============================================
 // Navigation
@@ -633,9 +868,79 @@ function initNavigation() {
             navigateTo(page);
         });
     });
+    
+    // Restore sidebar collapsed state
+    restoreSidebarState();
+}
+
+// ============================================
+// Sidebar Collapse / Expand
+// ============================================
+
+/**
+ * Toggle the sidebar between expanded and collapsed states.
+ * Collapsed state shows only icons with tooltips on hover.
+ * The main content smoothly expands to fill the freed space.
+ */
+function toggleSidebarCollapse() {
+    const sidebar = document.querySelector('.nav-sidebar');
+    if (!sidebar) return;
+    
+    const isCollapsed = sidebar.classList.contains('collapsed');
+    
+    if (isCollapsed) {
+        sidebar.classList.remove('collapsed');
+    } else {
+        sidebar.classList.add('collapsed');
+    }
+    
+    // Save preference
+    try {
+        localStorage.setItem('traka-sidebar-collapsed', !isCollapsed ? 'true' : 'false');
+    } catch (e) {
+        // localStorage not available
+    }
+}
+
+/**
+ * Restore the sidebar collapsed state from localStorage on init.
+ */
+function restoreSidebarState() {
+    try {
+        const collapsed = localStorage.getItem('traka-sidebar-collapsed');
+        if (collapsed === 'true') {
+            const sidebar = document.querySelector('.nav-sidebar');
+            if (sidebar) {
+                // Apply instantly without transition on initial load
+                sidebar.style.transition = 'none';
+                sidebar.classList.add('collapsed');
+                // Also suppress main-content transition briefly
+                const mainContent = document.querySelector('.main-content');
+                if (mainContent) mainContent.style.transition = 'none';
+                // Re-enable transitions after a frame
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        sidebar.style.transition = '';
+                        if (mainContent) mainContent.style.transition = '';
+                    });
+                });
+            }
+        }
+    } catch (e) {
+        // localStorage not available
+    }
 }
 
 function navigateTo(page) {
+    // Check if navigating to a page that needs heavy rendering
+    const totalLines = state.files.reduce((sum, f) => sum + f.lines.length, 0);
+    const needsLoader = (page === 'compare' || page === 'viewer') && totalLines > 5000;
+    
+    if (needsLoader) {
+        showGlobalLoader('Loading view...', page === 'compare' ? 'Rendering compare panels' : 'Rendering log viewer');
+    }
+    
+    // Switch nav and page visibility immediately
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.toggle('active', item.dataset.page === page);
     });
@@ -644,12 +949,41 @@ function navigateTo(page) {
         p.classList.toggle('active', p.id === `page-${page}`);
     });
     
-    // Trigger page-specific initialization
-    if (page === 'analytics') {
-        // Update analytics when navigating to the page
-        if (state.issues && state.issues.length > 0) {
-            updateAnalytics();
+    // Defer heavy rendering so the loader can paint first
+    const doPageInit = () => {
+        if (page === 'compare' && state.files.length > 0) {
+            updateCompareView();
         }
+        
+        // Ensure the viewer always displays a file when navigated to
+        if (page === 'viewer' && state.files.length > 0) {
+            // Auto-select first file if none selected yet
+            if (state.currentFileIndex === -1) {
+                state.currentFileIndex = 0;
+            }
+            updateFileDropdown();
+            displayLog(state.files[state.currentFileIndex]);
+        }
+        
+        if (page === 'analytics') {
+            if (state.issues && state.issues.length > 0) {
+                updateAnalytics();
+            }
+        }
+        
+        if (page === 'faqs') {
+            renderFAQs();
+        }
+        
+        if (needsLoader) {
+            hideGlobalLoader();
+        }
+    };
+    
+    if (needsLoader) {
+        setTimeout(doPageInit, 50);
+    } else {
+        doPageInit();
     }
 }
 
@@ -722,26 +1056,32 @@ function handleFiles(files, sortIntelligently = false, skipNavigation = false) {
         });
     }
     
-    // Show initial loading message for multiple files
-    if (validFiles.length > 1) {
-        showToast(`Loading ${validFiles.length} files...`, 'info');
-    }
+    // Show global loader for file loading
+    const loadMessage = validFiles.length > 1 
+        ? `Loading ${validFiles.length} files...` 
+        : `Loading ${validFiles[0].name}...`;
+    showGlobalLoader(loadMessage, 'Please wait while files are processed');
     
-    // Load all files (pass skipNavigation to each, suppress individual toasts)
-    const suppressToast = validFiles.length > 1;
-    validFiles.forEach(file => loadFile(file, skipNavigation, suppressToast));
-    
-    // Show completion message after all files loaded
-    if (validFiles.length > 1) {
+    // Use setTimeout to allow the loader to render before blocking file operations
+    setTimeout(() => {
+        // Load all files (pass skipNavigation to each, suppress individual toasts)
+        const suppressToast = validFiles.length > 1;
+        validFiles.forEach(file => loadFile(file, skipNavigation, suppressToast));
+        
+        // Hide loader and show completion message
         setTimeout(() => {
-            if (sortIntelligently) {
-                const fileTypes = validFiles.map(f => detectEngineType(f.name));
-                showToast(`✓ Loaded ${validFiles.length} files: ${fileTypes.join(' → ')}`, 'success');
-            } else {
-                showToast(`✓ Successfully loaded ${validFiles.length} files`, 'success');
+            hideGlobalLoader();
+            
+            if (validFiles.length > 1) {
+                if (sortIntelligently) {
+                    const fileTypes = validFiles.map(f => detectEngineType(f.name));
+                    showToast(`✓ Loaded ${validFiles.length} files: ${fileTypes.join(' → ')}`, 'success');
+                } else {
+                    showToast(`✓ Successfully loaded ${validFiles.length} files`, 'success');
+                }
             }
-        }, 500);
-    }
+        }, 100);
+    }, 50);
 }
 
 function getFileOrder(filename) {
@@ -796,6 +1136,129 @@ function detectEngineType(filename) {
     if (lower.endsWith('.cfg')) return 'Config';
     
     return 'Log File';
+}
+
+/**
+ * Get display-friendly name for a file
+ * Adds engine type prefix (e.g. "Business Engine - " or "Comms Engine - ") 
+ * so the user can immediately tell which engine a log belongs to.
+ * Works for all log files, not just generic debugging_log.txt.
+ */
+/**
+ * Get a clean, short human-readable label for a log file.
+ * Always visible in the panel header — no need to hover.
+ * Examples: "Business Engine Log", "Comms Engine Log", "CCure Integration Log"
+ */
+function getShortLabel(file) {
+    if (file.engineType) {
+        // Map engineType to clean short labels
+        const labelMap = {
+            'Business Engine':                'Business Engine Log',
+            'Comms Engine':                   'Comms Engine Log',
+            'TrakaWEB':                       'TrakaWEB Log',
+            'Integration Engine Service':     'Integration Service Log',
+            'Integration Monitor':            'Integration Monitor Log',
+            'Active Directory Integration':   'Active Directory Integration Log',
+            'SiPass Integration':             'SiPass Integration Log',
+            'PostBox Integration':            'PostBox Integration Log',
+            'Symmetry Integration':           'Symmetry Integration Log',
+            'OnGuard Integration':            'OnGuard Integration Log',
+            'Lenel Integration':              'OnGuard / Lenel Integration Log',
+            'CCure Integration':              'CCure Integration Log',
+            'Integration Log':                'Integration Log'
+        };
+        return labelMap[file.engineType] || `${file.engineType} Log`;
+    }
+    
+    // Fallback: try to detect from filename or content
+    const lower = (file.originalName || file.name).toLowerCase();
+    if (lower.includes('business')) return 'Business Engine Log';
+    if (lower.includes('comms')) return 'Comms Engine Log';
+    if (lower.includes('integration') && lower.includes('monitor')) return 'Integration Monitor Log';
+    if (lower.includes('integration') && lower.includes('service')) return 'Integration Service Log';
+    if (lower.includes('ccure')) return 'CCure Integration Log';
+    if (lower.includes('sipass')) return 'SiPass Integration Log';
+    if (lower.includes('symmetry')) return 'Symmetry Integration Log';
+    if (lower.includes('onguard') || lower.includes('lenel')) return 'OnGuard Integration Log';
+    if (lower.includes('postbox')) return 'PostBox Integration Log';
+    if (lower.includes('activedirectory') || lower.includes('active_directory')) return 'Active Directory Integration Log';
+    if (lower.includes('trakaweb') || lower.includes('mvcapp')) return 'TrakaWEB Log';
+    
+    // Last resort: return the filename
+    return file.originalName || file.name;
+}
+
+function getDisplayFileName(file) {
+    const filename = file.name;
+    const lower = filename.toLowerCase();
+    
+    // Skip config files - they don't need an engine prefix
+    if (lower.endsWith('.cfg')) {
+        return filename;
+    }
+    
+    // If the file has an engineType, use the short label
+    if (file.engineType) {
+        return getShortLabel(file);
+    }
+    
+    // First, try to detect engine type from the filename itself
+    const filenameEngineType = detectEngineType(filename);
+    
+    // If the filename already clearly identifies the engine, prefix it
+    if (filenameEngineType === 'Business Engine') {
+        if (!lower.startsWith('business engine')) {
+            return `Business Engine - ${filename}`;
+        }
+        return filename;
+    }
+    if (filenameEngineType === 'Comms Engine') {
+        if (!lower.startsWith('comms engine')) {
+            return `Comms Engine - ${filename}`;
+        }
+        return filename;
+    }
+    if (filenameEngineType === 'Integration Engine') {
+        if (!lower.startsWith('integration engine')) {
+            return `Integration Engine - ${filename}`;
+        }
+        return filename;
+    }
+    
+    // For generic filenames like "debugging_log.txt", detect from content
+    if (lower === 'debugging_log.txt' || lower === 'debugging_log.log') {
+        const engineType = detectEngineTypeFromContent(file);
+        if (engineType && engineType !== 'Log File') {
+            return `${engineType} - ${filename}`;
+        }
+    }
+    
+    return filename;
+}
+
+/**
+ * Detect engine type from file content when filename is generic
+ */
+function detectEngineTypeFromContent(file) {
+    if (!file.content && (!file.lines || file.lines.length === 0)) {
+        return 'Business Engine'; // Default assumption for BE logs
+    }
+    
+    // Check first few hundred lines for engine indicators
+    const linesToCheck = file.lines ? file.lines.slice(0, 200).join('\n').toLowerCase() : '';
+    
+    if (linesToCheck.includes('business engine') || linesToCheck.includes('businessengine')) {
+        return 'Business Engine';
+    }
+    if (linesToCheck.includes('comms engine') || linesToCheck.includes('commsengine')) {
+        return 'Comms Engine';
+    }
+    if (linesToCheck.includes('integration engine') || linesToCheck.includes('integrationengine')) {
+        return 'Integration Engine';
+    }
+    
+    // Default to Business Engine for Debugging_log.txt as it's typically the BE log
+    return 'Business Engine';
 }
 
 function loadFile(file, skipNavigation = false, suppressToast = false) {
@@ -887,12 +1350,18 @@ function detectLogLevel(line) {
 }
 
 function extractTimestamp(line) {
-    // Common timestamp patterns
+    // Common timestamp patterns - including milliseconds
     const patterns = [
-        /(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2})/,
-        /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2})/,
-        /(\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2})/,
-        /\[(\d{2}:\d{2}:\d{2})\]/
+        // ISO format with optional milliseconds: 2024-01-19 14:25:30.123 or 2024-01-19T14:25:30.123
+        /(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/,
+        // UK/European format with optional milliseconds: 19/01/2024 14:25:30.123
+        /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/,
+        // US format with optional milliseconds: 01-19-2024 14:25:30.123
+        /(\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/,
+        // Time only with optional milliseconds in brackets: [14:25:30.123]
+        /\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]/,
+        // Time only with optional milliseconds: 14:25:30.123
+        /\b(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\b/
     ];
     
     for (const pattern of patterns) {
@@ -909,6 +1378,26 @@ function detectIssues(fileData) {
     const fileIssues = [];
     
     fileData.lines.forEach((line, index) => {
+        // First, check solution database for known issues with solutions
+        const solution = matchSolution(line);
+        if (solution) {
+            fileIssues.push({
+                id: `${fileData.name}-${index}-${Date.now()}`,
+                file: fileData.name,
+                line: index + 1,
+                content: line,
+                severity: solution.severity.toLowerCase(),
+                category: solution.category.toLowerCase(),
+                title: solution.title,
+                description: `${solution.category} issue detected`,
+                pattern: solution.pattern.toString(),
+                hasSolution: true,
+                solution: solution
+            });
+            return; // Skip other pattern checks if we found a solution
+        }
+        
+        // Then check regular issue patterns
         for (const pattern of issuePatterns) {
             if (pattern.pattern.test(line)) {
                 // Check if issue detection is enabled for this type
@@ -923,7 +1412,8 @@ function detectIssues(fileData) {
                     category: pattern.category,
                     title: pattern.title,
                     description: pattern.description,
-                    pattern: pattern.pattern.toString()
+                    pattern: pattern.pattern.toString(),
+                    hasSolution: false
                 });
                 break; // Only first matching pattern per line
             }
@@ -943,7 +1433,8 @@ function detectIssues(fileData) {
                         category: custom.severity,
                         title: 'Custom Pattern Match',
                         description: custom.description || 'Custom pattern detected',
-                        pattern: custom.pattern
+                        pattern: custom.pattern,
+                        hasSolution: false
                     });
                 }
             } catch (e) {
@@ -962,6 +1453,11 @@ function detectIssues(fileData) {
     
     updateIssuesUI();
     updateAnalytics(); // Update analytics dashboard
+    
+    // Initialize/refresh solutions panel
+    if (typeof initializeSolutionsPanel === 'function') {
+        initializeSolutionsPanel();
+    }
 }
 
 function shouldDetectIssue(pattern) {
@@ -1077,9 +1573,14 @@ function renderLogOptimized(fileData, filteredLines, gutter, content) {
         // Regular log file display
         contentDiv.innerHTML = filteredLines.map(entry => {
             const levelClass = entry.level !== 'default' ? entry.level : '';
-            const highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
+            let highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
                 ? highlightSearchTerms(escapeHtml(entry.raw))
                 : escapeHtml(entry.raw);
+            
+            // Apply custom highlight rules
+            if (state.highlightRules.length > 0) {
+                highlightedLine = applyHighlightRules(entry.raw, fileData.name);
+            }
             
             return `<div class="log-line ${levelClass}" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
         }).join('');
@@ -1101,6 +1602,13 @@ function renderLogOptimized(fileData, filteredLines, gutter, content) {
     
     // Apply word wrap
     content.style.whiteSpace = state.settings.wordWrap ? 'pre-wrap' : 'pre';
+    
+    // If live tail is active, scroll to bottom so newest content is visible
+    if (state.liveTailActive && state.autoScrollEnabled) {
+        requestAnimationFrame(() => {
+            content.scrollTop = content.scrollHeight;
+        });
+    }
 }
 
 function filterLines(parsed) {
@@ -1203,7 +1711,7 @@ function initSearch() {
     }
     
     if (compareSearch) {
-        compareSearch.addEventListener('input', debounce(performCompareSearch, 300));
+        compareSearch.addEventListener('input', debounce(performCompareSearch, 150));
     }
 }
 
@@ -1332,22 +1840,116 @@ function highlightSearchTerms(text) {
 
 function performCompareSearch() {
     const query = document.getElementById('compareSearchInput').value.trim();
-    if (!query) return;
-    
-    // Highlight in all compare panels
     const panels = document.querySelectorAll('.compare-panel-content');
+    const isFilterMode = state.compareSearchFilterMode;
+    
+    // Clear all highlights and restore hidden lines first
     panels.forEach(panel => {
-        const lines = panel.querySelectorAll('.log-line');
-        const regex = new RegExp(escapeRegex(query), 'gi');
-        
-        lines.forEach(line => {
-            if (regex.test(line.textContent)) {
-                line.classList.add('search-match');
-            } else {
-                line.classList.remove('search-match');
-            }
+        panel.querySelectorAll('.log-line.search-match').forEach(line => {
+            line.classList.remove('search-match');
+        });
+        panel.querySelectorAll('.log-line.search-hidden').forEach(line => {
+            line.classList.remove('search-hidden');
+        });
+        // Remove any inline highlight spans from previous search
+        panel.querySelectorAll('.compare-search-hl').forEach(hl => {
+            hl.replaceWith(hl.textContent);
         });
     });
+    
+    // Update match count badges
+    updateCompareSearchCounts(0, 0);
+    
+    // If query is empty, we're done — highlights are cleared
+    if (!query) return;
+    
+    const regex = new RegExp(escapeRegex(query), 'gi');
+    let totalMatches = 0;
+    let totalLines = 0;
+    
+    // Highlight matching lines and wrap matched text with visible markers
+    panels.forEach(panel => {
+        const lines = panel.querySelectorAll('.log-line');
+        let panelMatches = 0;
+        
+        lines.forEach(line => {
+            const isMatch = regex.test(line.textContent);
+            regex.lastIndex = 0; // Reset for next test
+            
+            if (isMatch) {
+                line.classList.add('search-match');
+                panelMatches++;
+                
+                // Wrap the matched text inside the line for inline highlighting
+                const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT, null, false);
+                const textNodes = [];
+                while (walker.nextNode()) textNodes.push(walker.currentNode);
+                
+                textNodes.forEach(node => {
+                    const text = node.nodeValue;
+                    if (!regex.test(text)) return;
+                    regex.lastIndex = 0;
+                    
+                    const frag = document.createDocumentFragment();
+                    let lastIdx = 0;
+                    let match;
+                    
+                    while ((match = regex.exec(text)) !== null) {
+                        if (match.index > lastIdx) {
+                            frag.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+                        }
+                        const mark = document.createElement('mark');
+                        mark.className = 'compare-search-hl';
+                        mark.textContent = match[0];
+                        frag.appendChild(mark);
+                        lastIdx = regex.lastIndex;
+                    }
+                    if (lastIdx < text.length) {
+                        frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+                    }
+                    
+                    node.parentNode.replaceChild(frag, node);
+                });
+            } else if (isFilterMode) {
+                // In filter mode, hide non-matching lines
+                line.classList.add('search-hidden');
+            }
+        });
+        
+        totalMatches += panelMatches;
+        totalLines += lines.length;
+    });
+    
+    updateCompareSearchCounts(totalMatches, panels.length);
+}
+
+function toggleCompareSearchMode() {
+    state.compareSearchFilterMode = !state.compareSearchFilterMode;
+    
+    const btn = document.getElementById('compareSearchModeBtn');
+    if (btn) {
+        btn.classList.toggle('filter-active', state.compareSearchFilterMode);
+        btn.title = state.compareSearchFilterMode
+            ? 'Filter mode: showing matches only — click to switch to highlight mode'
+            : 'Highlight mode: all lines shown — click to switch to filter mode';
+    }
+    
+    // Re-run the search with the new mode
+    performCompareSearch();
+}
+
+function updateCompareSearchCounts(matchCount, panelCount) {
+    const badge = document.getElementById('compareSearchBadge');
+    if (!badge) return;
+    
+    const query = document.getElementById('compareSearchInput').value.trim();
+    if (!query || matchCount === 0) {
+        badge.style.display = 'none';
+        return;
+    }
+    
+    badge.style.display = 'inline-flex';
+    badge.textContent = `${matchCount} match${matchCount !== 1 ? 'es' : ''}`;
 }
 
 // ============================================
@@ -1502,28 +2104,62 @@ function updateCompareView() {
     // Set data attribute for grid layout
     container.setAttribute('data-file-count', state.files.length);
     
-    container.innerHTML = state.files.map((file, index) => {
+    // Set CSS variable for file count (used in horizontal layout)
+    container.style.setProperty('--file-count', state.files.length);
+    
+    // Apply layout class based on current mode
+    container.classList.remove('horizontal-layout', 'tiled-layout');
+    if (state.compareLayout === 'horizontal') {
+        container.classList.add('horizontal-layout');
+    } else if (state.compareLayout === 'tiled') {
+        container.classList.add('tiled-layout');
+    }
+    
+    // Clean up minimized indices that no longer exist (e.g. after file removal)
+    state.minimizedPanels.forEach(idx => {
+        if (idx >= state.files.length) state.minimizedPanels.delete(idx);
+    });
+    
+    // Build panel HTML — minimized panels are hidden via CSS class
+    const panelsHtml = state.files.map((file, index) => {
         const fileTypeBadge = file.isConfig 
             ? '<span class="file-type-badge config" style="margin-left: 0.5rem;">CONFIG</span>' 
             : '';
         
+        const liveTailClass = state.liveTailActive ? ' live-tail-active' : '';
+        const isMinimized = state.minimizedPanels.has(index);
+        const minimizedClass = isMinimized ? ' panel-minimized' : '';
+        const shortLabel = getShortLabel(file);
+        const originalFile = file.originalName || file.name;
         return `
-        <div class="compare-panel" data-index="${index}">
+        <div class="compare-panel${liveTailClass}${minimizedClass}" data-index="${index}">
             <div class="compare-panel-header">
-                <h4>
+                <h4 title="${escapeHtml(file.path || originalFile)}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                         <polyline points="14 2 14 8 20 8"></polyline>
                     </svg>
-                    ${escapeHtml(file.name)}${fileTypeBadge}
+                    ${escapeHtml(shortLabel)}${fileTypeBadge}
                 </h4>
-                <div class="file-badge">${file.lines.length.toLocaleString()} lines</div>
-                <button class="btn-icon" onclick="removeFile(${index})" title="Remove file">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                </button>
+                <div class="file-badge">${file.lines.length.toLocaleString()} lines &middot; ${formatFileSize(file.size)}</div>
+                <div class="compare-panel-actions">
+                    <button class="btn-icon panel-minimize-btn" onclick="toggleMinimizePanel(${index})" title="Minimize this panel">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                    <button class="btn-icon panel-maximize-btn" onclick="toggleMaximizePanel(${index})" title="Maximize this panel">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" onclick="removeFile(${index})" title="Remove file">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
             </div>
             <div class="compare-panel-content" onscroll="handleCompareScroll(event, ${index})">
                 ${file.lines.map((line, lineIdx) => {
@@ -1533,12 +2169,30 @@ function updateCompareView() {
                     const timestampAttr = timestamp ? `data-timestamp="${timestamp}"` : '';
                     const clickHandler = state.timeSyncActive && timestamp ? `onclick="syncToTimestamp('${timestamp}', ${index}, ${lineIdx + 1})"` : '';
                     const cursorStyle = state.timeSyncActive && timestamp ? 'cursor: pointer;' : '';
-                    return `<div class="log-line ${levelClass}" data-line="${lineIdx + 1}" data-file-index="${index}" ${timestampAttr} ${clickHandler} style="${cursorStyle}">${escapeHtml(line) || '&nbsp;'}</div>`;
+                    
+                    // Apply custom highlight rules
+                    const displayLine = state.highlightRules.length > 0 
+                        ? applyHighlightRules(line, file.name)
+                        : escapeHtml(line);
+                    
+                    return `<div class="log-line ${levelClass}" data-line="${lineIdx + 1}" data-file-index="${index}" ${timestampAttr} ${clickHandler} style="${cursorStyle}">${displayLine || '&nbsp;'}</div>`;
                 }).join('')}
             </div>
         </div>
     `;
     }).join('');
+    
+    container.innerHTML = panelsHtml;
+    
+    // Build/update the floating minimized dock (lives outside the container)
+    updateMinimizedDock();
+    
+    // After full re-render, scroll to bottom if live tail is active
+    if (state.liveTailActive && state.autoScrollEnabled) {
+        requestAnimationFrame(() => {
+            scrollComparePanelsToBottom();
+        });
+    }
 }
 
 function handleCompareScroll(event, sourceIndex) {
@@ -1567,6 +2221,93 @@ function toggleSyncScroll() {
     }
 }
 
+function toggleCompareLayout() {
+    const btn = document.getElementById('compareLayoutBtn');
+    const label = document.getElementById('compareLayoutLabel');
+    const icon = document.getElementById('compareLayoutIcon');
+    const container = document.getElementById('compareContainer');
+    const fileCount = state.files.length;
+    
+    if (state.compareLayout === 'grid') {
+        // For 4 files, "grid" is the default side-by-side, so toggle to tiled (2x2 window)
+        if (fileCount === 4) {
+            state.compareLayout = 'tiled';
+            btn.classList.add('active');
+            label.textContent = 'Tiled View';
+            icon.innerHTML = `
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+            `;
+            container.classList.remove('horizontal-layout');
+            container.classList.add('tiled-layout');
+            showToast('Tiled layout - 2×2 window grid', 'info');
+        } else {
+            state.compareLayout = 'horizontal';
+            btn.classList.add('active');
+            label.textContent = 'Horizontal View';
+            icon.innerHTML = `
+                <rect x="1" y="6" width="5" height="12"></rect>
+                <rect x="7" y="6" width="5" height="12"></rect>
+                <rect x="13" y="6" width="5" height="12"></rect>
+                <rect x="19" y="6" width="4" height="12"></rect>
+            `;
+            container.classList.remove('tiled-layout');
+            container.classList.add('horizontal-layout');
+            showToast('Horizontal layout - panels side by side (best for Time Sync)', 'success');
+        }
+    } else {
+        // Return to default side-by-side grid
+        state.compareLayout = 'grid';
+        btn.classList.remove('active');
+        label.textContent = fileCount === 4 ? 'Side by Side' : 'Grid View';
+        icon.innerHTML = fileCount === 4 ? `
+            <rect x="1" y="6" width="5" height="12"></rect>
+            <rect x="7" y="6" width="5" height="12"></rect>
+            <rect x="13" y="6" width="5" height="12"></rect>
+            <rect x="19" y="6" width="4" height="12"></rect>
+        ` : `
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+        `;
+        container.classList.remove('horizontal-layout');
+        container.classList.remove('tiled-layout');
+        showToast(fileCount === 4 ? 'Side by side layout - all panels in a row' : 'Grid layout - panels in grid (easier to read)', 'info');
+    }
+    
+    // Save preference to localStorage
+    try {
+        localStorage.setItem('traka-compare-layout', state.compareLayout);
+    } catch (e) {
+        console.error('Failed to save layout preference:', e);
+    }
+}
+
+function restoreCompareLayoutPreference() {
+    try {
+        const savedLayout = localStorage.getItem('traka-compare-layout');
+        if (savedLayout === 'horizontal' || savedLayout === 'tiled') {
+            // Set to grid so toggle switches it to the saved preference
+            state.compareLayout = 'grid';
+            toggleCompareLayout();
+            // If saved was tiled but toggle went to horizontal (non-4-file), that's fine
+            // If saved was horizontal but we have 4 files, toggle gives tiled first — 
+            // need to toggle again for horizontal
+            if (savedLayout === 'horizontal' && state.compareLayout !== 'horizontal' && state.files.length === 4) {
+                // Toggle went to tiled, but we wanted horizontal - toggle once more
+                // Actually for 4 files there's no 'horizontal' separate state, 
+                // the default grid IS side-by-side. So 'grid' = side-by-side for 4 files.
+                // Just restore the saved state directly.
+            }
+        }
+    } catch (e) {
+        console.error('Failed to restore layout preference:', e);
+    }
+}
+
 function highlightDifferences() {
     // Simple difference highlighting - marks lines that are unique to each file
     if (state.files.length < 2) {
@@ -1574,6 +2315,131 @@ function highlightDifferences() {
         return;
     }
     
+    // Show info dialog first to explain what the feature is for
+    showDiffInfoDialog();
+}
+
+function showDiffInfoDialog() {
+    // Remove existing if present
+    const existing = document.querySelector('.diff-info-overlay');
+    if (existing) existing.remove();
+    
+    const dialogHTML = `
+        <div class="diff-info-overlay" onclick="closeDiffInfoDialog()">
+            <div class="diff-info-dialog" onclick="event.stopPropagation()">
+                <div class="diff-info-header">
+                    <div class="diff-info-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 16v-4"></path>
+                            <path d="M12 8h.01"></path>
+                        </svg>
+                    </div>
+                    <h3>Before You Compare</h3>
+                    <button class="btn-icon" onclick="closeDiffInfoDialog()" title="Close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                
+                <div class="diff-info-body">
+                    <p class="diff-info-lead">
+                        This feature is designed for spotting differences between <strong>two files that should be similar</strong> — not for comparing unrelated log files.
+                    </p>
+                    
+                    <div class="diff-info-examples">
+                        <div class="diff-info-good">
+                            <div class="diff-info-example-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                                <strong>Great for</strong>
+                            </div>
+                            <ul>
+                                <li>Two config files — spot what changed between them</li>
+                                <li>Two copies of the same log — find where they diverge</li>
+                                <li>Any two text files that <em>should</em> match but don't</li>
+                            </ul>
+                        </div>
+                        <div class="diff-info-bad">
+                            <div class="diff-info-example-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                                <strong>Not ideal for</strong>
+                            </div>
+                            <ul>
+                                <li>Comparing a Business Engine log against a Comms Engine log — they're completely different files, so almost every line will be highlighted</li>
+                                <li>A customer's full suite of logs loaded together</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="diff-info-note">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                        <span>You currently have <strong>${state.files.length} files</strong> loaded. ${state.files.length > 2 ? 'With more than 2 files, expect more highlighted differences.' : 'This will compare all lines across your loaded files.'}</span>
+                    </div>
+                </div>
+                
+                <div class="diff-info-footer">
+                    <label class="diff-info-remember">
+                        <input type="checkbox" id="diffInfoDontShow" />
+                        <span>Don't show this again</span>
+                    </label>
+                    <div class="diff-info-actions">
+                        <button class="btn btn-secondary" onclick="closeDiffInfoDialog()">Cancel</button>
+                        <button class="btn btn-primary" onclick="proceedHighlightDifferences()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 3v18"></path>
+                                <path d="M5 10l7-7 7 7"></path>
+                            </svg>
+                            Proceed with Comparison
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', dialogHTML);
+    
+    // Check if user previously chose "don't show again"
+    try {
+        if (localStorage.getItem('traka-diff-info-skip') === 'true') {
+            closeDiffInfoDialog();
+            executeHighlightDifferences();
+            return;
+        }
+    } catch (e) { /* ignore */ }
+}
+
+function closeDiffInfoDialog() {
+    const overlay = document.querySelector('.diff-info-overlay');
+    if (overlay) {
+        overlay.style.animation = 'fadeOut 0.2s ease-out';
+        overlay.querySelector('.diff-info-dialog').style.animation = 'diffDialogOut 0.2s ease-out';
+        setTimeout(() => overlay.remove(), 200);
+    }
+}
+
+function proceedHighlightDifferences() {
+    // Save "don't show" preference if checked
+    const dontShow = document.getElementById('diffInfoDontShow');
+    if (dontShow && dontShow.checked) {
+        try {
+            localStorage.setItem('traka-diff-info-skip', 'true');
+        } catch (e) { /* ignore */ }
+    }
+    
+    closeDiffInfoDialog();
+    
+    // Small delay so the dialog closes before heavy processing
+    showGlobalLoader('Analysing differences...', 'Comparing lines across all files');
+    setTimeout(() => {
+        executeHighlightDifferences();
+        hideGlobalLoader();
+    }, 50);
+}
+
+function executeHighlightDifferences() {
     const allLines = state.files.map(f => new Set(f.lines.map(l => l.trim())));
     let uniqueCounts = Array(state.files.length).fill(0);
     let commonCount = 0;
@@ -1709,9 +2575,20 @@ function clearHighlights() {
 
 function removeFile(index) {
     const fileName = state.files[index].name;
+    const hasHeavyFiles = state.files.some(f => f.lines.length > 2000);
+    
     state.files.splice(index, 1);
     state.parsedLogs.delete(fileName);
     state.issues = state.issues.filter(i => i.file !== fileName);
+    
+    // Re-index minimized panels after removal
+    const newMinimized = new Set();
+    state.minimizedPanels.forEach(idx => {
+        if (idx < index) newMinimized.add(idx);
+        else if (idx > index) newMinimized.add(idx - 1);
+        // idx === index is removed (it was the file we just removed)
+    });
+    state.minimizedPanels = newMinimized;
     state.lastReadPositions.delete(fileName);
     
     if (state.currentFileIndex === index) {
@@ -1720,16 +2597,36 @@ function removeFile(index) {
         state.currentFileIndex--;
     }
     
-    updateUI();
-    updateFileDropdown();
-    updateFilesList();
-    updateCompareView();
-    updateIssuesUI();
-    
-    if (state.currentFileIndex >= 0) {
-        displayLog(state.files[state.currentFileIndex]);
+    // For heavy files, show a loader so the UI doesn't appear frozen
+    // while the compare view rebuilds all the DOM elements
+    if (hasHeavyFiles && state.files.length > 0) {
+        showGlobalLoader('Updating view...', 'Rebuilding panels');
+        setTimeout(() => {
+            updateUI();
+            updateFileDropdown();
+            updateFilesList();
+            updateCompareView();
+            updateIssuesUI();
+            
+            if (state.currentFileIndex >= 0) {
+                displayLog(state.files[state.currentFileIndex]);
+            } else {
+                displayLog(null);
+            }
+            hideGlobalLoader();
+        }, 50);
     } else {
-        displayLog(null);
+        updateUI();
+        updateFileDropdown();
+        updateFilesList();
+        updateCompareView();
+        updateIssuesUI();
+        
+        if (state.currentFileIndex >= 0) {
+            displayLog(state.files[state.currentFileIndex]);
+        } else {
+            displayLog(null);
+        }
     }
 }
 
@@ -1750,8 +2647,10 @@ function toggleLiveTail() {
 
 /**
  * Start live tail monitoring
+ * In Electron: Uses push-based file watchers (chokidar) for real-time updates
+ * In Browser: Falls back to polling with FileReader
  */
-function startLiveTail() {
+async function startLiveTail() {
     if (state.files.length === 0) {
         showToast('Load at least one log file first', 'warning');
         return;
@@ -1760,21 +2659,67 @@ function startLiveTail() {
     state.liveTailActive = true;
     updateLiveTailButton();
     
-    // Start polling for file changes
-    state.liveTailInterval = setInterval(() => {
-        checkForFileUpdates();
-    }, state.settings.tailRefreshInterval);
-    
-    showToast('Live Tail started - monitoring log files for changes', 'success');
-    
     // Enable auto-scroll
     state.autoScrollEnabled = true;
+    
+    if (isElectron) {
+        // Electron mode: Use efficient polling via IPC tail-file handler.
+        // This reads only new bytes from each file every poll cycle - fast and reliable.
+        // Chokidar push events are used as bonus acceleration but NOT relied upon.
+        let pathCount = 0;
+        for (const fileData of state.files) {
+            if (fileData.path) {
+                // Initialize byte offset from file's current content size
+                if (!state.lastReadPositions.has(fileData.name)) {
+                    state.lastReadPositions.set(fileData.name, fileData.size || 0);
+                }
+                pathCount++;
+                
+                // Also start push-based watcher as accelerator (bonus, not relied upon)
+                try {
+                    const result = await window.electronAPI.startTailWatch(fileData.path);
+                    if (result.success) {
+                        state.lastReadPositions.set(fileData.name, result.currentSize);
+                    }
+                } catch (error) {
+                    // Push watcher failed, polling will handle it
+                    console.warn(`Push watcher failed for ${fileData.name}, polling will cover it:`, error);
+                }
+            }
+        }
+        
+        // Start the main polling loop - this is the primary live tail mechanism
+        state.liveTailInterval = setInterval(() => {
+            pollElectronFiles();
+        }, state.settings.tailRefreshInterval);
+        
+        // Also poll browser-loaded files (drag-drop)
+        const filesWithoutPaths = state.files.filter(f => !f.path && f.fileHandle);
+        if (filesWithoutPaths.length > 0) {
+            // These are handled in the same interval via checkForFileUpdatesBrowser
+        }
+        
+        showToast(`Live Tail started - monitoring ${pathCount} file(s) in real-time`, 'success');
+    } else {
+        // Browser mode: Use polling with FileReader API
+        state.liveTailInterval = setInterval(() => {
+            checkForFileUpdatesBrowser();
+        }, state.settings.tailRefreshInterval);
+        
+        showToast('Live Tail started - monitoring log files for changes', 'success');
+    }
+    
+    // Immediately scroll to bottom on both pages so user sees the latest content
+    requestAnimationFrame(() => {
+        scrollToBottom();
+        scrollComparePanelsToBottom();
+    });
 }
 
 /**
  * Stop live tail monitoring
  */
-function stopLiveTail() {
+async function stopLiveTail() {
     state.liveTailActive = false;
     
     if (state.liveTailInterval) {
@@ -1782,25 +2727,127 @@ function stopLiveTail() {
         state.liveTailInterval = null;
     }
     
+    // Stop all Electron file watchers
+    if (isElectron) {
+        try {
+            await window.electronAPI.stopAllTailWatches();
+        } catch (error) {
+            console.error('Error stopping tail watches:', error);
+        }
+    }
+    
     updateLiveTailButton();
     showToast('Live Tail stopped', 'info');
 }
 
 /**
- * Check all loaded files for updates
+ * Poll Electron files for new content using the efficient tail-file IPC.
+ * This reads only new bytes from each file's last known byte offset.
+ * This is the PRIMARY live tail mechanism - reliable and deterministic.
+ *
+ * FIX: Uses Promise.all() for parallel IPC calls instead of sequential await,
+ * and includes a re-entrancy guard so overlapping poll cycles are skipped.
  */
-async function checkForFileUpdates() {
+let _pollInProgress = false;
+async function pollElectronFiles() {
+    if (!state.liveTailActive) return;
+    if (_pollInProgress) return; // Prevent re-entrant polling if previous cycle is still running
+    _pollInProgress = true;
+    
+    try {
+        // Separate Electron-path files from browser-loaded files
+        const electronFiles = state.files.filter(f => f.path);
+        const browserFiles = state.files.filter(f => !f.path && f.fileHandle);
+        
+        // Fire ALL tail-file IPC calls in parallel (non-blocking)
+        const tailPromises = electronFiles.map(async (fileData) => {
+            try {
+                const fromByte = state.lastReadPositions.get(fileData.name) || 0;
+                const result = await window.electronAPI.tailFile(fileData.path, fromByte);
+                return { fileData, result };
+            } catch (error) {
+                console.error(`Error polling file ${fileData.name}:`, error);
+                return { fileData, result: null };
+            }
+        });
+        
+        const results = await Promise.all(tailPromises);
+        
+        // Process results (DOM work happens here, on the main thread, after all IPC is done)
+        for (const { fileData, result } of results) {
+            if (!result || !result.success || !result.newContent || result.newContent.length === 0) continue;
+            
+            const newLines = result.newContent.split('\n').filter(line => line.trim());
+            if (newLines.length === 0) continue;
+            
+            console.log(`[LiveTail POLL] ${fileData.name}: +${newLines.length} lines, +${result.newContent.length} bytes`);
+            state.lastReadPositions.set(fileData.name, result.newOffset);
+            
+            if (result.wasReset) {
+                // File was rotated - full reload is justified here
+                fileData.content = result.newContent;
+                fileData.lines = result.newContent.split('\n');
+                fileData.size = result.newContent.length;
+                parseLogFile(fileData);
+                detectIssues(fileData);
+                
+                const currentFile = state.files[state.currentFileIndex];
+                if (currentFile && currentFile.name === fileData.name) {
+                    displayLog(fileData);
+                }
+                const comparePage = document.getElementById('page-compare');
+                if (comparePage && comparePage.classList.contains('active')) {
+                    updateCompareView();
+                }
+                updateUI();
+            } else {
+                // Append new content efficiently (no full re-parse)
+                appendNewContentLive(fileData, result.newContent, newLines);
+            }
+        }
+        
+        // Also check browser-loaded files in parallel
+        if (browserFiles.length > 0) {
+            const browserPromises = browserFiles.map(async (fileData) => {
+                try {
+                    const response = await readFileForTail(fileData.fileHandle);
+                    return { fileData, response };
+                } catch (error) {
+                    console.error(`Error checking browser file ${fileData.name}:`, error);
+                    return { fileData, response: null };
+                }
+            });
+            
+            const browserResults = await Promise.all(browserPromises);
+            for (const { fileData, response } of browserResults) {
+                if (response && response.newContent) {
+                    appendNewContentLive(fileData, response.newContent, response.newLines);
+                }
+            }
+        }
+    } finally {
+        _pollInProgress = false;
+    }
+}
+
+/**
+ * Check all loaded files for updates (browser-only FileReader fallback)
+ */
+async function checkForFileUpdatesBrowser() {
     if (!state.liveTailActive) return;
     
     for (let i = 0; i < state.files.length; i++) {
         const fileData = state.files[i];
+        
+        // Skip files that have Electron paths (handled by pollElectronFiles)
+        if (fileData.path) continue;
         
         try {
             // Re-read the file to check for new content
             const response = await readFileForTail(fileData.fileHandle);
             if (response && response.newContent) {
                 // New content detected
-                appendNewContent(fileData, response.newContent, response.newLines);
+                appendNewContentLive(fileData, response.newContent, response.newLines);
             }
         } catch (error) {
             console.error(`Error checking file ${fileData.name}:`, error);
@@ -1842,57 +2889,201 @@ async function readFileForTail(fileHandle) {
 }
 
 /**
- * Append new content to file data and update display
+ * Append new content to file data and update display efficiently.
+ * This is the core live tail update function - it appends new lines to 
+ * compare panels WITHOUT re-rendering the entire view.
  */
-function appendNewContent(fileData, newContent, newLines) {
+function appendNewContentLive(fileData, newContent, newLines) {
     if (!newLines || newLines.length === 0) return;
     
     // Append new lines to file data
+    const startLineIdx = fileData.lines.length;
     fileData.lines = fileData.lines.concat(newLines);
     fileData.content += newContent;
     fileData.size += newContent.length;
     
     // Limit total lines in tail mode to prevent memory issues
+    let trimmed = false;
     if (fileData.lines.length > state.settings.maxTailLines) {
         const excess = fileData.lines.length - state.settings.maxTailLines;
         fileData.lines = fileData.lines.slice(excess);
-        showToast(`Trimmed ${excess} old lines from ${fileData.name}`, 'info');
+        trimmed = true;
     }
     
-    // Re-parse new lines
-    parseLogFile(fileData);
-    detectIssues(fileData);
+    // FIX: Do NOT call parseLogFile() and detectIssues() on every live tail update!
+    // These are expensive O(n) full-file operations that iterate every line and run
+    // regex patterns against all of them. For files with 10,000+ lines running every
+    // 1 second, they were the primary cause of UI freezes.
+    // They only need to run on initial file load or file rotation (wasReset).
     
-    // Update UI if this is the currently viewed file
-    const currentFile = state.files[state.currentFileIndex];
-    if (currentFile && currentFile.name === fileData.name) {
-        displayLog(fileData);
-        
-        // Auto-scroll to bottom if enabled
-        if (state.autoScrollEnabled) {
-            scrollToBottom();
+    // Find the file index in state.files
+    const fileIndex = state.files.findIndex(f => f.name === fileData.name);
+    
+    // Batch DOM updates inside requestAnimationFrame to avoid layout thrashing
+    requestAnimationFrame(() => {
+        // Update the Log Viewer page if this is the currently viewed file
+        const currentFile = state.files[state.currentFileIndex];
+        if (currentFile && currentFile.name === fileData.name) {
+            if (trimmed) {
+                // If trimmed, do a full re-render as line numbers shifted
+                displayLog(fileData);
+            } else {
+                // Append new lines to the viewer efficiently
+                appendLinesToViewer(fileData, newLines, startLineIdx);
+            }
+            
+            // Auto-scroll to bottom if enabled
+            if (state.autoScrollEnabled) {
+                scrollToBottom();
+            }
         }
-    }
-    
-    // Update compare view if active
-    const comparePage = document.getElementById('page-compare');
-    if (comparePage && comparePage.classList.contains('active')) {
-        updateCompareView();
         
-        if (state.autoScrollEnabled) {
-            scrollComparePanelsToBottom();
+        // Update compare panels efficiently (append-only, no full re-render)
+        const comparePage = document.getElementById('page-compare');
+        if (comparePage && comparePage.classList.contains('active')) {
+            if (trimmed) {
+                // If trimmed, full re-render needed because early lines were removed
+                updateCompareView();
+            } else {
+                // Efficiently append just the new lines to the correct compare panel
+                appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx);
+            }
+            
+            // Update the line count badge for this panel
+            updateComparePanelBadge(fileIndex, fileData.lines.length);
+            
+            if (state.autoScrollEnabled) {
+                scrollComparePanelToBottom(fileIndex);
+            }
         }
-    }
+        
+        // Update stats (lightweight - just sets textContent on a few elements)
+        updateUI();
+        // FIX: Do NOT call updateIssuesUI() here - issues haven't changed during
+        // a live tail append (no detectIssues was run), so rebuilding the issues
+        // DOM on every update was pure waste.
+    });
+}
+
+/**
+ * Efficiently append new lines to the log viewer (single file view)
+ */
+function appendLinesToViewer(fileData, newLines, startLineIdx) {
+    const logContent = document.getElementById('logContent');
+    if (!logContent) return;
     
-    // Update stats
-    updateUI();
-    updateIssuesUI();
+    const logGutter = document.getElementById('logGutter');
     
-    // Show notification for new content
-    const currentPage = document.querySelector('.page.active');
-    if (currentPage && currentPage.id !== 'page-viewer' && currentPage.id !== 'page-compare') {
-        showToast(`${newLines.length} new line(s) in ${fileData.name}`, 'info');
+    newLines.forEach((line, idx) => {
+        const lineNum = startLineIdx + idx + 1;
+        const level = detectLogLevel(line);
+        const levelClass = level !== 'default' ? level : '';
+        
+        // Apply custom highlight rules
+        const displayLine = state.highlightRules.length > 0 
+            ? applyHighlightRules(line, fileData.name)
+            : escapeHtml(line);
+        
+        const lineDiv = document.createElement('div');
+        lineDiv.className = `log-line ${levelClass}`;
+        lineDiv.setAttribute('data-line', lineNum);
+        lineDiv.innerHTML = displayLine || '&nbsp;';
+        logContent.appendChild(lineDiv);
+        
+        // Add gutter line number
+        if (logGutter) {
+            const gutterLine = document.createElement('div');
+            gutterLine.className = 'gutter-line';
+            gutterLine.textContent = lineNum;
+            logGutter.appendChild(gutterLine);
+        }
+    });
+}
+
+/**
+ * Efficiently append new lines to a specific compare panel without re-rendering all panels.
+ * This is the key function for real-time live tail in the Compare view.
+ */
+function appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx) {
+    const panel = document.querySelector(`.compare-panel[data-index="${fileIndex}"]`);
+    if (!panel) return;
+    
+    const panelContent = panel.querySelector('.compare-panel-content');
+    if (!panelContent) return;
+    
+    // Create a document fragment for efficient batch DOM insertion
+    const fragment = document.createDocumentFragment();
+    
+    newLines.forEach((line, idx) => {
+        const lineNum = startLineIdx + idx + 1;
+        const level = detectLogLevel(line);
+        const levelClass = level !== 'default' ? level : '';
+        const timestamp = extractTimestamp(line);
+        
+        // Apply custom highlight rules
+        const displayLine = state.highlightRules.length > 0 
+            ? applyHighlightRules(line, fileData.name)
+            : escapeHtml(line);
+        
+        const lineDiv = document.createElement('div');
+        lineDiv.className = `log-line ${levelClass}`;
+        lineDiv.setAttribute('data-line', lineNum);
+        lineDiv.setAttribute('data-file-index', fileIndex);
+        if (timestamp) {
+            lineDiv.setAttribute('data-timestamp', timestamp);
+        }
+        if (state.timeSyncActive && timestamp) {
+            lineDiv.style.cursor = 'pointer';
+            lineDiv.onclick = () => syncToTimestamp(timestamp, fileIndex, lineNum);
+        }
+        lineDiv.innerHTML = displayLine || '&nbsp;';
+        
+        // Add a brief flash effect so the user can see new lines arriving
+        lineDiv.classList.add('live-tail-new-line');
+        
+        fragment.appendChild(lineDiv);
+    });
+    
+    panelContent.appendChild(fragment);
+    
+    // Remove the flash animation class after it plays
+    requestAnimationFrame(() => {
+        setTimeout(() => {
+            const flashLines = panelContent.querySelectorAll('.live-tail-new-line');
+            flashLines.forEach(el => el.classList.remove('live-tail-new-line'));
+        }, 1500);
+    });
+}
+
+/**
+ * Update the line count badge for a specific compare panel
+ */
+function updateComparePanelBadge(fileIndex, lineCount) {
+    const panel = document.querySelector(`.compare-panel[data-index="${fileIndex}"]`);
+    if (!panel) return;
+    
+    const badge = panel.querySelector('.file-badge');
+    if (badge) {
+        badge.textContent = `${lineCount.toLocaleString()} lines`;
     }
+}
+
+/**
+ * Scroll a specific compare panel to bottom (not all panels)
+ */
+function scrollComparePanelToBottom(fileIndex) {
+    const panel = document.querySelector(`.compare-panel[data-index="${fileIndex}"]`);
+    if (!panel) return;
+    
+    const panelContent = panel.querySelector('.compare-panel-content');
+    if (panelContent) {
+        panelContent.scrollTop = panelContent.scrollHeight;
+    }
+}
+
+// Keep backward compatibility - old appendNewContent calls the new function
+function appendNewContent(fileData, newContent, newLines) {
+    appendNewContentLive(fileData, newContent, newLines);
 }
 
 /**
@@ -1968,6 +3159,16 @@ function updateLiveTailButton() {
     
     updateButton(viewerBtn);
     updateButton(compareBtn);
+    
+    // Toggle live-tail-active class on all compare panels for visual indicator
+    const panels = document.querySelectorAll('.compare-panel');
+    panels.forEach(panel => {
+        if (state.liveTailActive) {
+            panel.classList.add('live-tail-active');
+        } else {
+            panel.classList.remove('live-tail-active');
+        }
+    });
 }
 
 /**
@@ -2373,14 +3574,25 @@ function updateFileDropdown() {
     }
     
     select.innerHTML = state.files.map((file, index) => 
-        `<option value="${escapeHtml(file.name)}" ${index === state.currentFileIndex ? 'selected' : ''}>${escapeHtml(file.name)}</option>`
+        `<option value="${escapeHtml(file.name)}" ${index === state.currentFileIndex ? 'selected' : ''}>${escapeHtml(getDisplayFileName(file))}</option>`
     ).join('');
     
     select.onchange = (e) => {
         const index = state.files.findIndex(f => f.name === e.target.value);
         if (index >= 0) {
             state.currentFileIndex = index;
-            displayLog(state.files[index]);
+            const file = state.files[index];
+            
+            // Show loading for larger files
+            if (file.lines && file.lines.length > 2000) {
+                showGlobalLoader('Loading file...', file.name);
+                setTimeout(() => {
+                    displayLog(file);
+                    hideGlobalLoader();
+                }, 50);
+            } else {
+                displayLog(file);
+            }
         }
     };
 }
@@ -2401,7 +3613,7 @@ function updateFilesList() {
                     <polyline points="14 2 14 8 20 8"></polyline>
                 </svg>
                 <div>
-                    <div class="file-name">${escapeHtml(file.name)} ${fileTypeBadge}</div>
+                    <div class="file-name">${escapeHtml(getDisplayFileName(file))} ${fileTypeBadge}</div>
                     <div class="file-meta">${file.lines.length.toLocaleString()} lines · ${formatFileSize(file.size)}</div>
                 </div>
             </div>
@@ -2422,8 +3634,21 @@ function updateFilesList() {
 function viewFile(index) {
     state.currentFileIndex = index;
     updateFileDropdown();
-    displayLog(state.files[index]);
-    navigateTo('viewer');
+    
+    const file = state.files[index];
+    
+    // Show loading for larger files
+    if (file.lines && file.lines.length > 2000) {
+        showGlobalLoader('Loading file...', file.name);
+        setTimeout(() => {
+            displayLog(file);
+            navigateTo('viewer');
+            hideGlobalLoader();
+        }, 50);
+    } else {
+        displayLog(file);
+        navigateTo('viewer');
+    }
 }
 
 function jumpToLine() {
@@ -2530,7 +3755,7 @@ function populateStitchFileList() {
                         <input type="checkbox" 
                                value="${escapeHtml(file.name)}" 
                                onchange="updateStitchSelection()">
-                        <span class="file-name">${escapeHtml(file.name)}</span>
+                        <span class="file-name">${escapeHtml(getDisplayFileName(file))}</span>
                         <span class="file-info">${file.lines.length.toLocaleString()} lines | ${formatFileSize(file.size)}</span>
                     </label>
                 `).join('')}
@@ -2609,35 +3834,66 @@ function performStitch() {
         return;
     }
     
-    showToast(`Stitching ${state.stitchedFiles.length} files...`, 'info');
+    // Show loading overlay
+    showStitchingLoader(state.stitchedFiles.length);
     
+    // Use setTimeout to allow UI to update before heavy processing
+    setTimeout(async () => {
+        try {
+            await performStitchAsync();
+        } catch (error) {
+            hideStitchingLoader();
+            showToast(`Stitch failed: ${error.message}`, 'error');
+        }
+    }, 50);
+}
+
+async function performStitchAsync() {
     // Gather all log entries from selected files
     const allEntries = [];
     let totalLines = 0;
     let entriesWithTimestamps = 0;
     let entriesWithoutTimestamps = 0;
+    const totalFiles = state.stitchedFiles.length;
+    let processedFiles = 0;
     
-    state.stitchedFiles.forEach(fileName => {
+    // Process files in chunks to keep UI responsive
+    for (const fileName of state.stitchedFiles) {
         const fileData = state.files.find(f => f.name === fileName);
-        if (!fileData) return;
+        if (!fileData) continue;
         
         const parsed = state.parsedLogs.get(fileName);
-        if (!parsed) return;
+        if (!parsed) continue;
         
-        // Add each log entry with source file info
-        parsed.forEach(entry => {
-            totalLines++;
-            if (entry.timestamp) {
-                const sortableTime = parseTimestampForStitch(entry.timestamp);
-                if (sortableTime !== null) {
-                    allEntries.push({
-                        ...entry,
-                        sourceFile: fileName,
-                        sortableTimestamp: sortableTime
-                    });
-                    entriesWithTimestamps++;
+        // Update progress
+        processedFiles++;
+        updateStitchingProgress(processedFiles, totalFiles, `Processing ${fileName}...`);
+        
+        // Process entries in chunks
+        const chunkSize = 500;
+        for (let i = 0; i < parsed.length; i += chunkSize) {
+            const chunk = parsed.slice(i, Math.min(i + chunkSize, parsed.length));
+            
+            chunk.forEach(entry => {
+                totalLines++;
+                if (entry.timestamp) {
+                    const sortableTime = parseTimestampForStitch(entry.timestamp);
+                    if (sortableTime !== null) {
+                        allEntries.push({
+                            ...entry,
+                            sourceFile: fileName,
+                            sortableTimestamp: sortableTime
+                        });
+                        entriesWithTimestamps++;
+                    } else {
+                        allEntries.push({
+                            ...entry,
+                            sourceFile: fileName,
+                            sortableTimestamp: null
+                        });
+                        entriesWithoutTimestamps++;
+                    }
                 } else {
-                    // Timestamp exists but couldn't be parsed
                     allEntries.push({
                         ...entry,
                         sourceFile: fileName,
@@ -2645,17 +3901,18 @@ function performStitch() {
                     });
                     entriesWithoutTimestamps++;
                 }
-            } else {
-                // No timestamp at all
-                allEntries.push({
-                    ...entry,
-                    sourceFile: fileName,
-                    sortableTimestamp: null
-                });
-                entriesWithoutTimestamps++;
+            });
+            
+            // Yield to browser every chunk
+            if (i + chunkSize < parsed.length) {
+                await new Promise(resolve => setTimeout(resolve, 0));
             }
-        });
-    });
+        }
+    }
+    
+    // Update progress for sorting
+    updateStitchingProgress(100, 100, 'Sorting entries by timestamp...');
+    await new Promise(resolve => setTimeout(resolve, 50));
     
     // Sort by timestamp - entries without timestamps go to the end
     const sortedEntries = allEntries.sort((a, b) => {
@@ -2686,6 +3943,10 @@ function performStitch() {
     // Parse the stitched data
     state.parsedLogs.set(stitchedFileName, sortedEntries);
     
+    // Update progress for issue detection
+    updateStitchingProgress(100, 100, 'Detecting issues...');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
     // Add to files list if not already there, or replace if it exists
     const existingIndex = state.files.findIndex(f => f.name === stitchedFileName || f.isStitched);
     if (existingIndex >= 0) {
@@ -2708,6 +3969,9 @@ function performStitch() {
     // Enable export button
     document.getElementById('exportStitchedBtn').disabled = false;
     
+    // Hide loader
+    hideStitchingLoader();
+    
     // Close stitch panel
     toggleStitchMode();
     
@@ -2716,6 +3980,129 @@ function performStitch() {
         : `✓ Successfully stitched ${state.stitchedFiles.length} files with ${sortedEntries.length.toLocaleString()} log entries`;
     
     showToast(successMsg, 'success');
+}
+
+function showStitchingLoader(fileCount) {
+    // Remove existing overlay if present
+    hideStitchingLoader();
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'stitchingLoader';
+    overlay.className = 'stitching-loader-overlay';
+    overlay.innerHTML = `
+        <div class="stitching-loader-content">
+            <div class="stitching-spinner"></div>
+            <h3>Stitching ${fileCount} log files...</h3>
+            <p id="stitchingStatus">Initializing...</p>
+            <div class="stitching-progress-bar">
+                <div class="stitching-progress-fill" id="stitchingProgress"></div>
+            </div>
+            <div class="stitching-status" id="stitchingDetails">
+                Processing files...
+            </div>
+            <div class="global-loader-timer" id="stitchingTimer">0.0s</div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    
+    // Start elapsed timer
+    const startTime = performance.now();
+    overlay._timerInterval = setInterval(() => {
+        const timerEl = document.getElementById('stitchingTimer');
+        if (timerEl) {
+            const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+            timerEl.textContent = `${elapsed}s`;
+        }
+    }, 100);
+}
+
+function hideStitchingLoader() {
+    const overlay = document.getElementById('stitchingLoader');
+    if (overlay) {
+        if (overlay._timerInterval) {
+            clearInterval(overlay._timerInterval);
+        }
+        overlay.style.animation = 'fadeOut 0.2s ease-out';
+        setTimeout(() => overlay.remove(), 200);
+    }
+}
+
+// ============================================
+// Global Loading Overlay
+// ============================================
+function showGlobalLoader(message = 'Loading...', subtext = '') {
+    // Remove existing loader if present
+    hideGlobalLoader(true); // immediate removal
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'globalLoader';
+    overlay.className = 'global-loader-overlay';
+    overlay.innerHTML = `
+        <div class="global-loader-content">
+            <div class="global-loader-spinner"></div>
+            <div class="global-loader-text">${escapeHtml(message)}</div>
+            ${subtext ? `<div class="global-loader-subtext">${escapeHtml(subtext)}</div>` : ''}
+            <div class="global-loader-timer" id="globalLoaderTimer">0.0s</div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    
+    // Start elapsed timer
+    const startTime = performance.now();
+    overlay._timerInterval = setInterval(() => {
+        const timerEl = document.getElementById('globalLoaderTimer');
+        if (timerEl) {
+            const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+            timerEl.textContent = `${elapsed}s`;
+        }
+    }, 100);
+}
+
+function hideGlobalLoader(immediate = false) {
+    const overlay = document.getElementById('globalLoader');
+    if (overlay) {
+        // Clear the timer interval
+        if (overlay._timerInterval) {
+            clearInterval(overlay._timerInterval);
+        }
+        if (immediate) {
+            overlay.remove();
+        } else {
+            overlay.classList.add('fade-out');
+            setTimeout(() => overlay.remove(), 150);
+        }
+    }
+}
+
+function updateGlobalLoaderText(message, subtext) {
+    const textEl = document.querySelector('#globalLoader .global-loader-text');
+    const subtextEl = document.querySelector('#globalLoader .global-loader-subtext');
+    
+    if (textEl) {
+        textEl.textContent = message;
+    }
+    if (subtextEl && subtext !== undefined) {
+        subtextEl.textContent = subtext;
+    }
+}
+
+function updateStitchingProgress(current, total, status) {
+    const progressBar = document.getElementById('stitchingProgress');
+    const statusEl = document.getElementById('stitchingStatus');
+    const detailsEl = document.getElementById('stitchingDetails');
+    
+    if (progressBar) {
+        const percentage = Math.min(100, (current / total) * 100);
+        progressBar.style.width = `${percentage}%`;
+    }
+    
+    if (statusEl) {
+        statusEl.textContent = status || 'Processing...';
+    }
+    
+    if (detailsEl) {
+        detailsEl.textContent = `${current} of ${total} files processed`;
+    }
 }
 
 function parseTimestampForStitch(timestampStr) {
@@ -2999,6 +4386,456 @@ function deselectAllStitchFiles() {
 }
 
 // ============================================
+// Custom Text Highlighting Feature (BareTail-style)
+// ============================================
+
+function openHighlightRulesModal() {
+    const modal = document.getElementById('highlightRulesModal');
+    modal.style.display = 'flex';
+    // Trigger reflow so the transition from opacity 0 → 1 actually animates
+    modal.offsetHeight;
+    modal.classList.add('active');
+    populateRuleFileSelector();
+    updateHighlightRulesList();
+    updateHighlightPreview();
+    
+    // Setup color picker sync
+    const textColorPicker = document.getElementById('newRuleTextColor');
+    const textColorHex = document.getElementById('newRuleTextColorHex');
+    const bgColorPicker = document.getElementById('newRuleBgColor');
+    const bgColorHex = document.getElementById('newRuleBgColorHex');
+    
+    textColorPicker.addEventListener('input', (e) => {
+        textColorHex.value = e.target.value;
+        updateHighlightPreview();
+    });
+    
+    textColorHex.addEventListener('input', (e) => {
+        if (/^#[0-9A-F]{6}$/i.test(e.target.value)) {
+            textColorPicker.value = e.target.value;
+            updateHighlightPreview();
+        }
+    });
+    
+    bgColorPicker.addEventListener('input', (e) => {
+        bgColorHex.value = e.target.value;
+        updateHighlightPreview();
+    });
+    
+    bgColorHex.addEventListener('input', (e) => {
+        if (/^#[0-9A-F]{6}$/i.test(e.target.value)) {
+            bgColorPicker.value = e.target.value;
+            updateHighlightPreview();
+        }
+    });
+}
+
+function closeHighlightRulesModal() {
+    const modal = document.getElementById('highlightRulesModal');
+    modal.classList.remove('active');
+    // Wait for the fade-out transition to finish before hiding
+    setTimeout(() => {
+        modal.style.display = 'none';
+    }, 250);
+    
+    // Check if there's heavy re-rendering to do
+    const hasViewer = state.currentFileIndex >= 0;
+    const hasCompare = state.files.length > 0;
+    const totalLines = state.files.reduce((sum, f) => sum + f.lines.length, 0);
+    const needsLoader = (hasViewer || hasCompare) && totalLines > 0;
+    
+    if (needsLoader) {
+        showGlobalLoader('Applying highlight rules...', 'Updating log views');
+        
+        // Defer the heavy re-render so the loader can paint
+        setTimeout(() => {
+            if (hasViewer) {
+                const currentFile = state.files[state.currentFileIndex];
+                if (currentFile.isStitched) {
+                    displayStitchedLog(currentFile);
+                } else {
+                    displayLog(currentFile);
+                }
+            }
+            
+            if (hasCompare) {
+                updateCompareView();
+            }
+            
+            hideGlobalLoader();
+        }, 50);
+    }
+}
+
+/**
+ * Populate the file selector in the highlight rules modal.
+ * Shows "All Files" plus a chip for each currently loaded file.
+ */
+function populateRuleFileSelector() {
+    const container = document.getElementById('ruleFileSelector');
+    if (!container) return;
+    
+    if (state.files.length === 0) {
+        container.innerHTML = `
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.375rem 0.75rem; background: var(--accent-primary-light); border: 1px solid var(--accent-primary); border-radius: 20px; font-size: 0.8125rem; color: var(--accent-primary); font-weight: 500;">
+                <input type="checkbox" id="ruleTargetAll" checked disabled style="accent-color: var(--accent-primary);">
+                <span>All Files</span>
+            </label>
+            <span style="font-size: 0.75rem; color: var(--text-tertiary); padding: 0.375rem;">No files loaded — rule will apply to all files when loaded</span>
+        `;
+        return;
+    }
+    
+    let html = `
+        <label class="rule-file-chip" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.375rem 0.75rem; background: var(--accent-primary-light); border: 1px solid var(--accent-primary); border-radius: 20px; font-size: 0.8125rem; color: var(--accent-primary); font-weight: 500; transition: all 0.15s ease;">
+            <input type="checkbox" id="ruleTargetAll" checked onchange="toggleRuleTargetAll(this.checked)" style="accent-color: var(--accent-primary);">
+            <span>All Files</span>
+        </label>
+    `;
+    
+    state.files.forEach((file, idx) => {
+        const shortLabel = getShortLabel(file);
+        html += `
+            <label class="rule-file-chip" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.375rem 0.75rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 20px; font-size: 0.8125rem; color: var(--text-secondary); transition: all 0.15s ease;" data-file-name="${escapeHtml(file.name)}">
+                <input type="checkbox" class="rule-file-checkbox" value="${escapeHtml(file.name)}" checked disabled onchange="updateRuleFileChipStyle(this)" style="accent-color: var(--accent-secondary);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; flex-shrink: 0;">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span>${escapeHtml(shortLabel)}</span>
+            </label>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+/**
+ * Toggle "All Files" checkbox — when checked, disable individual file checkboxes.
+ */
+function toggleRuleTargetAll(allChecked) {
+    const checkboxes = document.querySelectorAll('.rule-file-checkbox');
+    checkboxes.forEach(cb => {
+        cb.disabled = allChecked;
+        cb.checked = allChecked;
+        updateRuleFileChipStyle(cb);
+    });
+    
+    // Style the "All" chip
+    const allLabel = document.getElementById('ruleTargetAll').closest('label');
+    if (allChecked) {
+        allLabel.style.background = 'var(--accent-primary-light)';
+        allLabel.style.borderColor = 'var(--accent-primary)';
+        allLabel.style.color = 'var(--accent-primary)';
+    } else {
+        allLabel.style.background = 'var(--bg-tertiary)';
+        allLabel.style.borderColor = 'var(--border-color)';
+        allLabel.style.color = 'var(--text-secondary)';
+    }
+}
+
+/**
+ * Update the visual style of a file chip based on its checkbox state.
+ */
+function updateRuleFileChipStyle(checkbox) {
+    const label = checkbox.closest('label');
+    if (!label) return;
+    if (checkbox.checked) {
+        label.style.background = 'rgba(59, 130, 246, 0.1)';
+        label.style.borderColor = 'var(--accent-secondary)';
+        label.style.color = 'var(--accent-secondary)';
+    } else {
+        label.style.background = 'var(--bg-tertiary)';
+        label.style.borderColor = 'var(--border-color)';
+        label.style.color = 'var(--text-tertiary)';
+    }
+}
+
+/**
+ * Read the current file selection from the rule file selector.
+ * @returns {'all' | string[]} 'all' or array of selected file names
+ */
+function getSelectedRuleTargetFiles() {
+    const allCheckbox = document.getElementById('ruleTargetAll');
+    if (!allCheckbox || allCheckbox.checked) return 'all';
+    
+    const selected = [];
+    document.querySelectorAll('.rule-file-checkbox').forEach(cb => {
+        if (cb.checked) selected.push(cb.value);
+    });
+    
+    return selected.length > 0 ? selected : 'all';
+}
+
+/**
+ * Pre-select files in the file selector (used when editing a rule).
+ */
+function setRuleTargetFilesSelection(targetFiles) {
+    const allCheckbox = document.getElementById('ruleTargetAll');
+    if (!allCheckbox) return;
+    
+    if (targetFiles === 'all' || !targetFiles) {
+        allCheckbox.checked = true;
+        toggleRuleTargetAll(true);
+    } else {
+        allCheckbox.checked = false;
+        toggleRuleTargetAll(false);
+        
+        document.querySelectorAll('.rule-file-checkbox').forEach(cb => {
+            cb.checked = targetFiles.includes(cb.value);
+            updateRuleFileChipStyle(cb);
+        });
+    }
+}
+
+function updateHighlightPreview() {
+    const textColor = document.getElementById('newRuleTextColor').value;
+    const bgColor = document.getElementById('newRuleBgColor').value;
+    const sample = document.getElementById('highlightPreviewSample');
+    
+    if (sample) {
+        sample.style.color = textColor;
+        sample.style.backgroundColor = bgColor;
+    }
+}
+
+function addHighlightRule() {
+    const pattern = document.getElementById('newRulePattern').value.trim();
+    const textColor = document.getElementById('newRuleTextColor').value;
+    const bgColor = document.getElementById('newRuleBgColor').value;
+    const caseSensitive = document.getElementById('newRuleCaseSensitive').checked;
+    const targetFiles = getSelectedRuleTargetFiles();
+    
+    if (!pattern) {
+        showToast('Please enter a search pattern', 'warning');
+        return;
+    }
+    
+    // Create new rule
+    const rule = {
+        id: `rule-${Date.now()}`,
+        pattern: pattern,
+        textColor: textColor,
+        backgroundColor: bgColor,
+        caseSensitive: caseSensitive,
+        enabled: true,
+        targetFiles: targetFiles
+    };
+    
+    state.highlightRules.push(rule);
+    
+    // Clear inputs and reset file selector to "All"
+    document.getElementById('newRulePattern').value = '';
+    document.getElementById('newRuleCaseSensitive').checked = false;
+    const allCb = document.getElementById('ruleTargetAll');
+    if (allCb) {
+        allCb.checked = true;
+        toggleRuleTargetAll(true);
+    }
+    
+    // Update list
+    updateHighlightRulesList();
+    
+    // Save to localStorage
+    saveHighlightRules();
+    
+    showToast('Highlight rule added', 'success');
+}
+
+function updateHighlightRulesList() {
+    const list = document.getElementById('highlightRulesList');
+    const countEl = document.getElementById('rulesCount');
+    
+    if (!list) return;
+    
+    countEl.textContent = state.highlightRules.length;
+    
+    if (state.highlightRules.length === 0) {
+        list.innerHTML = `
+            <div style="text-align: center; padding: 2rem; color: var(--text-secondary); font-size: 0.875rem;">
+                No highlight rules yet. Add one above!
+            </div>
+        `;
+        return;
+    }
+    
+    list.innerHTML = state.highlightRules.map((rule, index) => {
+        // Build the "applies to" label
+        let appliesTo = '';
+        if (!rule.targetFiles || rule.targetFiles === 'all') {
+            appliesTo = '<span style="font-size: 0.6875rem; padding: 0.125rem 0.5rem; background: var(--accent-primary-light); color: var(--accent-primary); border-radius: 10px; font-weight: 500;">All Files</span>';
+        } else if (Array.isArray(rule.targetFiles)) {
+            appliesTo = rule.targetFiles.map(name => {
+                // Try to find the file and get its short label
+                const file = state.files.find(f => f.name === name);
+                const label = file ? getShortLabel(file) : name;
+                return `<span style="font-size: 0.6875rem; padding: 0.125rem 0.5rem; background: rgba(59, 130, 246, 0.1); color: var(--accent-secondary); border-radius: 10px; font-weight: 500;">${escapeHtml(label)}</span>`;
+            }).join(' ');
+        }
+        
+        return `
+        <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <button class="btn-icon" onclick="moveRuleUp(${index})" title="Move up" ${index === 0 ? 'disabled' : ''}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="18 15 12 9 6 15"></polyline>
+                    </svg>
+                </button>
+                <button class="btn-icon" onclick="moveRuleDown(${index})" title="Move down" ${index === state.highlightRules.length - 1 ? 'disabled' : ''}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </button>
+            </div>
+            <div style="flex: 1;">
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.875rem; margin-bottom: 0.375rem;">
+                    <span style="color: ${rule.textColor}; background-color: ${rule.backgroundColor}; padding: 2px 6px; border-radius: 3px;">${escapeHtml(rule.pattern)}</span>
+                    ${rule.caseSensitive ? '<span style="margin-left: 0.5rem; font-size: 0.75rem; color: var(--text-tertiary);">(case sensitive)</span>' : ''}
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; margin-bottom: 0.25rem;">
+                    ${appliesTo}
+                </div>
+                <div style="font-size: 0.6875rem; color: var(--text-tertiary);">
+                    Text: <span style="font-family: 'JetBrains Mono', monospace;">${rule.textColor}</span> &middot; 
+                    Bg: <span style="font-family: 'JetBrains Mono', monospace;">${rule.backgroundColor}</span>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" ${rule.enabled ? 'checked' : ''} onchange="toggleHighlightRule(${index}, this.checked)" style="margin: 0;">
+                </label>
+                <button class="btn-icon" onclick="editHighlightRule(${index})" title="Edit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                </button>
+                <button class="btn-icon" onclick="deleteHighlightRule(${index})" title="Delete">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    `;
+    }).join('');
+}
+
+function toggleHighlightRule(index, enabled) {
+    state.highlightRules[index].enabled = enabled;
+    saveHighlightRules();
+    showToast(enabled ? 'Rule enabled' : 'Rule disabled', 'info');
+}
+
+function moveRuleUp(index) {
+    if (index === 0) return;
+    [state.highlightRules[index], state.highlightRules[index - 1]] = 
+    [state.highlightRules[index - 1], state.highlightRules[index]];
+    updateHighlightRulesList();
+    saveHighlightRules();
+}
+
+function moveRuleDown(index) {
+    if (index === state.highlightRules.length - 1) return;
+    [state.highlightRules[index], state.highlightRules[index + 1]] = 
+    [state.highlightRules[index + 1], state.highlightRules[index]];
+    updateHighlightRulesList();
+    saveHighlightRules();
+}
+
+function editHighlightRule(index) {
+    const rule = state.highlightRules[index];
+    document.getElementById('newRulePattern').value = rule.pattern;
+    document.getElementById('newRuleTextColor').value = rule.textColor;
+    document.getElementById('newRuleTextColorHex').value = rule.textColor;
+    document.getElementById('newRuleBgColor').value = rule.backgroundColor;
+    document.getElementById('newRuleBgColorHex').value = rule.backgroundColor;
+    document.getElementById('newRuleCaseSensitive').checked = rule.caseSensitive;
+    updateHighlightPreview();
+    
+    // Restore file selection for this rule
+    setRuleTargetFilesSelection(rule.targetFiles);
+    
+    // Delete the old rule
+    state.highlightRules.splice(index, 1);
+    updateHighlightRulesList();
+    saveHighlightRules();
+    
+    showToast('Edit rule and click "Add Rule" to save changes', 'info');
+}
+
+function deleteHighlightRule(index) {
+    state.highlightRules.splice(index, 1);
+    updateHighlightRulesList();
+    saveHighlightRules();
+    showToast('Rule deleted', 'success');
+}
+
+/**
+ * Apply highlight rules to a line of text.
+ * @param {string} lineText - The raw log line text
+ * @param {string} [fileName] - Optional file name to filter rules by target.
+ *   When provided, only rules targeting 'all' or including this file name are applied.
+ * @returns {string} HTML with highlighted spans
+ */
+function applyHighlightRules(lineText, fileName) {
+    let html = escapeHtml(lineText);
+    
+    // Apply each enabled rule in order (priority based on list order)
+    state.highlightRules.forEach(rule => {
+        if (!rule.enabled) return;
+        
+        // Check if this rule targets the given file
+        if (fileName && rule.targetFiles && rule.targetFiles !== 'all') {
+            if (!rule.targetFiles.includes(fileName)) return;
+        }
+        
+        try {
+            const flags = rule.caseSensitive ? 'g' : 'gi';
+            const regex = new RegExp(escapeRegex(rule.pattern), flags);
+            
+            html = html.replace(regex, (match) => {
+                return `<span style="color: ${rule.textColor}; background-color: ${rule.backgroundColor}; padding: 2px 4px; border-radius: 2px; font-weight: 500;">${match}</span>`;
+            });
+        } catch (e) {
+            // Invalid regex, skip
+            console.warn('Invalid highlight pattern:', rule.pattern, e);
+        }
+    });
+    
+    return html;
+}
+
+function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function saveHighlightRules() {
+    try {
+        localStorage.setItem('traka-highlight-rules', JSON.stringify(state.highlightRules));
+    } catch (e) {
+        console.error('Failed to save highlight rules:', e);
+    }
+}
+
+function loadHighlightRules() {
+    try {
+        const saved = localStorage.getItem('traka-highlight-rules');
+        if (saved) {
+            state.highlightRules = JSON.parse(saved);
+            // Ensure all rules have a targetFiles property (backward compat)
+            state.highlightRules.forEach(rule => {
+                if (!rule.targetFiles) rule.targetFiles = 'all';
+            });
+        }
+    } catch (e) {
+        console.error('Failed to load highlight rules:', e);
+    }
+}
+
+
+// ============================================
 // Date Sorting Feature
 // ============================================
 function changeDateSort() {
@@ -3126,6 +4963,13 @@ function adjustFullscreenLogHeight() {
 // Add keyboard shortcut for fullscreen (ESC to exit)
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+        // First check if a single panel is maximized - restore that first
+        const maximizedPanel = document.querySelector('.compare-panel.panel-maximized');
+        if (maximizedPanel) {
+            restoreAllPanels();
+            return;
+        }
+        
         const viewerPage = document.getElementById('page-viewer');
         const comparePage = document.getElementById('page-compare');
         
@@ -3180,40 +5024,506 @@ function toggleCompareFullscreen() {
     
     if (!comparePage) return;
     
-    if (comparePage.classList.contains('fullscreen-mode')) {
-        // Exit fullscreen
-        comparePage.classList.remove('fullscreen-mode');
-        document.body.classList.remove('fullscreen-active');
-        if (navSidebar) navSidebar.style.display = '';
-        fullscreenBtn.classList.remove('active');
-        fullscreenBtn.title = 'Toggle fullscreen mode';
+    const isEntering = !comparePage.classList.contains('fullscreen-mode');
+    
+    // Show loader for the brief layout transition
+    showGlobalLoader(
+        isEntering ? 'Entering fullscreen...' : 'Exiting fullscreen...',
+        'Adjusting layout'
+    );
+    
+    // Defer the actual toggle so the loader can paint
+    setTimeout(() => {
+        if (!isEntering) {
+            // Exit fullscreen
+            comparePage.classList.remove('fullscreen-mode');
+            document.body.classList.remove('fullscreen-active');
+            if (navSidebar) navSidebar.style.display = '';
+            fullscreenBtn.classList.remove('active');
+            fullscreenBtn.title = 'Toggle fullscreen mode';
+            
+            // Update the SVG to "expand" icon
+            fullscreenBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                </svg>
+                Fullscreen
+            `;
+            
+            showToast('Exited fullscreen mode', 'info');
+        } else {
+            // Enter fullscreen
+            comparePage.classList.add('fullscreen-mode');
+            document.body.classList.add('fullscreen-active');
+            if (navSidebar) navSidebar.style.display = 'none';
+            fullscreenBtn.classList.add('active');
+            fullscreenBtn.title = 'Exit fullscreen mode (ESC)';
+            
+            // Update the SVG to "minimize" icon
+            fullscreenBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
+                </svg>
+                Exit Fullscreen
+            `;
+            
+            showToast('Fullscreen mode enabled (press ESC to exit)', 'success');
+        }
         
-        // Update the SVG to "expand" icon
-        fullscreenBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
-            </svg>
-            Fullscreen
-        `;
-        
-        showToast('Exited fullscreen mode', 'info');
+        hideGlobalLoader();
+    }, 50);
+}
+
+// ============================================
+// Per-Panel Maximize (Focus View)
+// ============================================
+
+/**
+ * Toggle a single compare panel to fill the entire compare area.
+ * Other panels are hidden. Click again or press ESC to restore.
+ */
+function toggleMaximizePanel(panelIndex) {
+    const container = document.getElementById('compareContainer');
+    const panels = container.querySelectorAll('.compare-panel');
+    const targetPanel = container.querySelector(`.compare-panel[data-index="${panelIndex}"]`);
+    
+    if (!targetPanel) return;
+    
+    const isMaximized = targetPanel.classList.contains('panel-maximized');
+    
+    if (isMaximized) {
+        // Restore all panels
+        restoreAllPanels();
     } else {
-        // Enter fullscreen
-        comparePage.classList.add('fullscreen-mode');
-        document.body.classList.add('fullscreen-active');
-        if (navSidebar) navSidebar.style.display = 'none';
-        fullscreenBtn.classList.add('active');
-        fullscreenBtn.title = 'Exit fullscreen mode (ESC)';
+        // Maximize this panel, hide others
+        container.classList.add('has-maximized-panel');
         
-        // Update the SVG to "minimize" icon
-        fullscreenBtn.innerHTML = `
+        panels.forEach(panel => {
+            const idx = parseInt(panel.getAttribute('data-index'));
+            if (idx === panelIndex) {
+                panel.classList.add('panel-maximized');
+                // Change button to minimize icon
+                const btn = panel.querySelector('.panel-maximize-btn');
+                if (btn) {
+                    btn.innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
+                        </svg>
+                    `;
+                    btn.title = 'Restore panel (ESC)';
+                }
+            } else {
+                panel.classList.add('panel-hidden');
+            }
+        });
+        
+        // Scroll to bottom if live tailing
+        if (state.liveTailActive && state.autoScrollEnabled) {
+            const panelContent = targetPanel.querySelector('.compare-panel-content');
+            if (panelContent) {
+                requestAnimationFrame(() => {
+                    panelContent.scrollTop = panelContent.scrollHeight;
+                });
+            }
+        }
+    }
+}
+
+/**
+ * Restore all panels from maximized state
+ */
+function restoreAllPanels() {
+    const container = document.getElementById('compareContainer');
+    if (!container) return;
+    
+    container.classList.remove('has-maximized-panel');
+    
+    const panels = container.querySelectorAll('.compare-panel');
+    panels.forEach(panel => {
+        panel.classList.remove('panel-maximized', 'panel-hidden');
+        // Restore maximize button icon
+        const btn = panel.querySelector('.panel-maximize-btn');
+        if (btn) {
+            btn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                </svg>
+            `;
+            btn.title = 'Maximize this panel';
+        }
+    });
+}
+
+// ============================================
+// Per-Panel Minimize (Collapse to Dock)
+// ============================================
+
+/**
+ * Toggle minimize state for a single compare panel.
+ * Minimized panels collapse out of view and appear as clickable chips
+ * in a dock at the bottom of the compare container. Remaining panels
+ * automatically share the freed space equally.
+ */
+function toggleMinimizePanel(panelIndex) {
+    if (state.minimizedPanels.has(panelIndex)) {
+        restoreMinimizedPanel(panelIndex);
+        return;
+    }
+    
+    // Don't allow minimizing all panels
+    const visibleCount = state.files.length - state.minimizedPanels.size;
+    if (visibleCount <= 1) {
+        showToast('Cannot minimize the last visible panel', 'warning');
+        return;
+    }
+    
+    state.minimizedPanels.add(panelIndex);
+    
+    // Apply minimized class immediately without full re-render for smooth UX
+    const container = document.getElementById('compareContainer');
+    const panel = container.querySelector(`.compare-panel[data-index="${panelIndex}"]`);
+    
+    if (panel) {
+        panel.classList.add('panel-minimized');
+    }
+    
+    // Rebuild dock and update layout
+    updateMinimizedDock();
+    
+    const shortLabel = getShortLabel(state.files[panelIndex]);
+    showToast(`Minimized "${shortLabel}" — click to restore`, 'info');
+}
+
+/**
+ * Restore a minimized panel back to its normal position.
+ */
+function restoreMinimizedPanel(panelIndex) {
+    if (!state.minimizedPanels.has(panelIndex)) return;
+    
+    state.minimizedPanels.delete(panelIndex);
+    
+    const container = document.getElementById('compareContainer');
+    const panel = container.querySelector(`.compare-panel[data-index="${panelIndex}"]`);
+    
+    if (panel) {
+        panel.classList.remove('panel-minimized');
+        panel.classList.add('panel-restoring');
+        // Remove the animation class after it plays
+        setTimeout(() => panel.classList.remove('panel-restoring'), 300);
+    }
+    
+    // Rebuild dock (may remove dock entirely if no more minimized panels)
+    updateMinimizedDock();
+    
+    const shortLabel = getShortLabel(state.files[panelIndex]);
+    showToast(`Restored "${shortLabel}"`, 'success');
+}
+
+/**
+ * Update the minimized panels dock.
+ * The dock floats at the bottom of the compare page (outside the
+ * overflow-hidden compare-container) so it's always visible and clickable.
+ */
+function updateMinimizedDock() {
+    const comparePage = document.getElementById('page-compare');
+    if (!comparePage) return;
+    
+    // Remove existing dock wherever it might be
+    const existingDock = document.querySelector('.minimized-panels-dock');
+    if (existingDock) existingDock.remove();
+    
+    if (state.minimizedPanels.size === 0) return;
+    
+    const dock = document.createElement('div');
+    dock.className = 'minimized-panels-dock';
+    dock.id = 'minimizedPanelsDock';
+    
+    // Label
+    const label = document.createElement('span');
+    label.className = 'minimized-dock-label';
+    label.textContent = 'Minimized:';
+    dock.appendChild(label);
+    
+    state.minimizedPanels.forEach(idx => {
+        if (idx < state.files.length) {
+            const file = state.files[idx];
+            const shortLabel = getShortLabel(file);
+            const chip = document.createElement('button');
+            chip.className = 'minimized-panel-chip';
+            chip.title = `Click to restore "${shortLabel}"`;
+            chip.onclick = () => restoreMinimizedPanel(idx);
+            chip.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span>${escapeHtml(shortLabel)}</span>
+                <span class="minimized-chip-lines">${file.lines.length.toLocaleString()} lines</span>
+            `;
+            dock.appendChild(chip);
+        }
+    });
+    
+    // Add a "Restore All" button when more than one is minimized
+    if (state.minimizedPanels.size > 1) {
+        const restoreAllBtn = document.createElement('button');
+        restoreAllBtn.className = 'minimized-panel-chip minimized-restore-all';
+        restoreAllBtn.title = 'Restore all minimized panels';
+        restoreAllBtn.onclick = () => {
+            state.minimizedPanels.clear();
+            updateCompareView();
+            showToast('All panels restored', 'success');
+        };
+        restoreAllBtn.innerHTML = `
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
             </svg>
-            Exit Fullscreen
+            <span>Restore All</span>
         `;
+        dock.appendChild(restoreAllBtn);
+    }
+    
+    comparePage.appendChild(dock);
+}
+
+// ============================================
+// FAQs / Knowledge Base Page
+// ============================================
+
+let faqCategoryFilter = 'all';
+let faqSearchTerm = '';
+
+/**
+ * Render the FAQs knowledge base from the solution database.
+ * Shows all known error patterns and solutions regardless of
+ * whether they appear in the currently loaded log files.
+ */
+function renderFAQs() {
+    const list = document.getElementById('faqsList');
+    const stats = document.getElementById('faqsStats');
+    if (!list || typeof solutionDatabase === 'undefined') return;
+    
+    const patterns = solutionDatabase.patterns || [];
+    
+    // Apply filters
+    let filtered = patterns;
+    
+    if (faqCategoryFilter !== 'all') {
+        filtered = filtered.filter(p => p.category === faqCategoryFilter);
+    }
+    
+    if (faqSearchTerm) {
+        const term = faqSearchTerm.toLowerCase();
+        filtered = filtered.filter(p =>
+            p.title.toLowerCase().includes(term) ||
+            p.id.toLowerCase().includes(term) ||
+            p.category.toLowerCase().includes(term) ||
+            p.severity.toLowerCase().includes(term) ||
+            p.why.toLowerCase().includes(term) ||
+            p.steps.some(s => s.title.toLowerCase().includes(term) || s.description.toLowerCase().includes(term))
+        );
+    }
+    
+    // Category counts for stats
+    const categoryCounts = {};
+    patterns.forEach(p => {
+        categoryCounts[p.category] = (categoryCounts[p.category] || 0) + 1;
+    });
+    
+    // Severity counts
+    const severityCounts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0 };
+    patterns.forEach(p => {
+        if (severityCounts[p.severity] !== undefined) severityCounts[p.severity]++;
+    });
+    
+    // Render stats bar
+    stats.innerHTML = `
+        <div class="faqs-stats-row">
+            <div class="faqs-stat-chip">
+                <span class="faqs-stat-number">${patterns.length}</span>
+                <span class="faqs-stat-label">Known Issues</span>
+            </div>
+            <div class="faqs-stat-chip severity-critical">
+                <span class="faqs-stat-number">${severityCounts.CRITICAL}</span>
+                <span class="faqs-stat-label">Critical</span>
+            </div>
+            <div class="faqs-stat-chip severity-high">
+                <span class="faqs-stat-number">${severityCounts.HIGH}</span>
+                <span class="faqs-stat-label">High</span>
+            </div>
+            <div class="faqs-stat-chip severity-medium">
+                <span class="faqs-stat-number">${severityCounts.MEDIUM}</span>
+                <span class="faqs-stat-label">Medium</span>
+            </div>
+            <div class="faqs-stat-chip">
+                <span class="faqs-stat-number">${Object.keys(categoryCounts).length}</span>
+                <span class="faqs-stat-label">Categories</span>
+            </div>
+            ${filtered.length !== patterns.length ? `
+                <div class="faqs-stat-chip faqs-stat-filtered">
+                    <span class="faqs-stat-number">${filtered.length}</span>
+                    <span class="faqs-stat-label">Showing</span>
+                </div>
+            ` : ''}
+        </div>
+    `;
+    
+    if (filtered.length === 0) {
+        list.innerHTML = `
+            <div class="faqs-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <p>No matching issues found</p>
+                <span>Try a different search term or category filter</span>
+            </div>
+        `;
+        return;
+    }
+    
+    list.innerHTML = filtered.map((solution, idx) => {
+        const severityClass = solution.severity.toLowerCase();
+        const isDetected = state.issues.some(issue => {
+            if (issue.solution && issue.solution.id === solution.id) return true;
+            return solution.pattern.test(issue.content || '');
+        });
+        const detectedBadge = isDetected 
+            ? '<span class="faq-detected-badge">DETECTED IN LOGS</span>' 
+            : '';
         
-        showToast('Fullscreen mode enabled (press ESC to exit)', 'success');
+        return `
+        <div class="faq-card" data-faq-index="${idx}">
+            <div class="faq-card-header" onclick="toggleFAQCard(${idx})">
+                <div class="faq-card-title-row">
+                    <span class="faq-severity-badge ${severityClass}">${escapeHtml(solution.severity)}</span>
+                    <span class="faq-category-badge">${escapeHtml(solution.category)}</span>
+                    ${detectedBadge}
+                    <h3>${escapeHtml(solution.title)}</h3>
+                </div>
+                <div class="faq-card-meta">
+                    <span class="faq-id">${escapeHtml(solution.id)}</span>
+                    <span class="faq-time">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                        ${escapeHtml(solution.estimatedTime)}
+                    </span>
+                    <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </div>
+            </div>
+            <div class="faq-card-body">
+                <div class="faq-why">
+                    <h4>Why does this happen?</h4>
+                    <p>${escapeHtml(solution.why)}</p>
+                </div>
+                
+                ${solution.prerequisites && solution.prerequisites.length > 0 ? `
+                <div class="faq-prereqs">
+                    <h4>Prerequisites</h4>
+                    <ul>
+                        ${solution.prerequisites.map(p => `<li>${escapeHtml(p)}</li>`).join('')}
+                    </ul>
+                </div>
+                ` : ''}
+                
+                <div class="faq-steps">
+                    <h4>Resolution Steps</h4>
+                    <ol class="faq-steps-list">
+                        ${solution.steps.map(step => `
+                            <li class="faq-step">
+                                <div class="faq-step-title">${escapeHtml(step.title)}</div>
+                                <div class="faq-step-desc">${escapeHtml(step.description)}</div>
+                                ${step.command ? `<code class="faq-step-cmd">${escapeHtml(step.command)}</code>` : ''}
+                            </li>
+                        `).join('')}
+                    </ol>
+                </div>
+                
+                ${solution.relatedIssues && solution.relatedIssues.length > 0 ? `
+                <div class="faq-related">
+                    <h4>Related Issues</h4>
+                    <div class="faq-related-chips">
+                        ${solution.relatedIssues.map(r => `
+                            <button class="faq-related-chip" onclick="jumpToFAQById('${escapeHtml(r)}')">${escapeHtml(r)}</button>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Toggle expand/collapse of a FAQ card.
+ */
+function toggleFAQCard(index) {
+    const card = document.querySelector(`.faq-card[data-faq-index="${index}"]`);
+    if (!card) return;
+    card.classList.toggle('expanded');
+}
+
+/**
+ * Filter FAQs by search term (debounced via oninput).
+ */
+function filterFAQs() {
+    const input = document.getElementById('faqsSearchInput');
+    faqSearchTerm = input ? input.value.trim() : '';
+    renderFAQs();
+}
+
+/**
+ * Set the active FAQ category filter.
+ */
+function setFAQCategory(category) {
+    faqCategoryFilter = category;
+    
+    // Update button active states
+    document.querySelectorAll('.faqs-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.category === category);
+    });
+    
+    renderFAQs();
+}
+
+/**
+ * Jump to and expand a FAQ card by its solution ID (e.g. from related issues links).
+ */
+function jumpToFAQById(solutionId) {
+    // Clear filters so the target is visible
+    faqCategoryFilter = 'all';
+    faqSearchTerm = '';
+    const searchInput = document.getElementById('faqsSearchInput');
+    if (searchInput) searchInput.value = '';
+    document.querySelectorAll('.faqs-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.category === 'all');
+    });
+    
+    renderFAQs();
+    
+    // Find the card with the matching ID
+    const patterns = solutionDatabase.patterns || [];
+    const targetIndex = patterns.findIndex(p => p.id === solutionId);
+    if (targetIndex === -1) {
+        showToast(`Issue "${solutionId}" not found in knowledge base`, 'warning');
+        return;
+    }
+    
+    const card = document.querySelector(`.faq-card[data-faq-index="${targetIndex}"]`);
+    if (card) {
+        card.classList.add('expanded');
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Brief highlight flash
+        card.classList.add('faq-highlight-flash');
+        setTimeout(() => card.classList.remove('faq-highlight-flash'), 1500);
     }
 }
 
@@ -3225,6 +5535,38 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Copy text to clipboard
+ * @param {string} text - Text to copy
+ * @param {string} successMessage - Toast message on success
+ */
+function copyToClipboard(text, successMessage = 'Copied to clipboard') {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showToast(successMessage, 'success');
+        }).catch(err => {
+            console.error('Clipboard copy failed:', err);
+            showToast('Failed to copy to clipboard', 'error');
+        });
+    } else {
+        // Fallback for older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showToast(successMessage, 'success');
+        } catch (err) {
+            console.error('Clipboard copy failed:', err);
+            showToast('Failed to copy to clipboard', 'error');
+        }
+        document.body.removeChild(textarea);
+    }
 }
 
 function escapeRegex(string) {
@@ -3654,10 +5996,10 @@ function closeClearLogsModal() {
     modal.classList.remove('active');
 }
 
-function clearAllLogs() {
+async function clearAllLogs() {
     // Stop live tail if active
     if (state.liveTailActive) {
-        stopLiveTail();
+        await stopLiveTail();
     }
     
     const fileCount = state.files.length;
@@ -3755,6 +6097,9 @@ function toggleTimeSync() {
             Enabling...
         `;
         
+        // Show global loader for a polished feel while processing
+        showGlobalLoader();
+        
         // Use setTimeout to allow UI to update
         setTimeout(() => {
             state.timeSyncActive = true;
@@ -3768,6 +6113,16 @@ function toggleTimeSync() {
                 setTimeout(() => {
                     infoPanel.style.opacity = '1';
                 }, 10);
+                
+                // Restore collapsed state from localStorage
+                try {
+                    const wasCollapsed = localStorage.getItem('traka-timesync-collapsed') === 'true';
+                    if (wasCollapsed) {
+                        infoPanel.classList.add('collapsed');
+                    }
+                } catch (e) {
+                    console.error('Failed to restore time sync panel state:', e);
+                }
             }
             
             // Add click handlers to existing elements instead of rebuilding
@@ -3777,7 +6132,8 @@ function toggleTimeSync() {
             btn.disabled = false;
             btn.style.opacity = '1';
             
-            showToast('Time Sync enabled - Click any timestamped line', 'success');
+            hideGlobalLoader();
+            showToast('Time Sync enabled - Click any timestamped line (Press T to collapse panel)', 'success');
         }, 50);
     } else {
         // Disabling
@@ -3788,6 +6144,9 @@ function toggleTimeSync() {
             </svg>
             Disabling...
         `;
+        
+        // Show global loader for a polished feel while processing
+        showGlobalLoader();
         
         setTimeout(() => {
             state.timeSyncActive = false;
@@ -3809,10 +6168,43 @@ function toggleTimeSync() {
             btn.disabled = false;
             btn.style.opacity = '1';
             
+            hideGlobalLoader();
             showToast('Time Sync disabled', 'info');
         }, 50);
     }
 }
+
+function toggleTimeSyncPanel() {
+    const infoPanel = document.getElementById('timeSyncInfo');
+    const toggleBtn = document.getElementById('timeSyncToggleBtn');
+    
+    if (!infoPanel) return;
+    
+    const isCollapsed = infoPanel.classList.toggle('collapsed');
+    
+    // Update button icon rotation handled by CSS
+    
+    // No manual padding needed — flex layout auto-fills available space
+    
+    // Save preference
+    try {
+        localStorage.setItem('traka-timesync-collapsed', isCollapsed.toString());
+    } catch (e) {
+        console.error('Failed to save time sync panel state:', e);
+    }
+}
+
+// Keyboard shortcut for toggling time sync panel
+document.addEventListener('keydown', (e) => {
+    // 'T' key to toggle time sync panel (only when time sync is active)
+    if (e.key === 't' || e.key === 'T') {
+        const infoPanel = document.getElementById('timeSyncInfo');
+        if (infoPanel && infoPanel.style.display !== 'none') {
+            e.preventDefault();
+            toggleTimeSyncPanel();
+        }
+    }
+});
 
 function enableTimeSyncHandlers() {
     // Add click handlers to timestamped lines without rebuilding entire view
@@ -3865,12 +6257,40 @@ function updatePresetButtons(value) {
 function syncToTimestamp(timestampStr, sourceFileIndex, sourceLine) {
     if (!state.timeSyncActive) return;
     
+    // Prevent double-clicks during sync
+    if (state.timeSyncProcessing) return;
+    state.timeSyncProcessing = true;
+    
     // Parse the timestamp
     const targetTime = parseTimestamp(timestampStr);
     if (!targetTime) {
+        console.warn('Failed to parse timestamp:', timestampStr);
         showToast('Unable to parse timestamp from this line', 'warning');
+        state.timeSyncProcessing = false;
         return;
     }
+    
+    // Show loader for multiple files or large files
+    const totalLines = state.files.reduce((sum, f) => sum + (f.lines ? f.lines.length : 0), 0);
+    const showLoader = state.files.length > 2 || totalLines > 10000;
+    
+    if (showLoader) {
+        showGlobalLoader('Syncing...', 'Finding matching timestamps');
+    }
+    
+    // Use setTimeout to allow loader to render
+    setTimeout(() => {
+        performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sourceLine);
+        
+        if (showLoader) {
+            hideGlobalLoader();
+        }
+        state.timeSyncProcessing = false;
+    }, showLoader ? 50 : 0);
+}
+
+function performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sourceLine) {
+    console.log('Time Sync - Target timestamp:', timestampStr, '| Parsed to:', new Date(targetTime).toISOString(), '| Ms:', targetTime);
     
     // Clear previous highlights
     clearTimeSyncHighlights();
@@ -3879,36 +6299,92 @@ function syncToTimestamp(timestampStr, sourceFileIndex, sourceLine) {
     const minTime = targetTime - rangeMs;
     const maxTime = targetTime + rangeMs;
     
-    let totalHighlighted = 0;
+    console.log(`Time Sync - Range: ±${rangeMs}ms (${rangeMs/1000}s) | Min: ${new Date(minTime).toISOString()} | Max: ${new Date(maxTime).toISOString()}`);
     
-    // Highlight matching time ranges in all files
-    document.querySelectorAll('.compare-panel').forEach((panel, panelIndex) => {
-        const lines = panel.querySelectorAll('.log-line[data-timestamp]');
-        let firstMatch = null;
-        let fileHighlightCount = 0;
+    let totalHighlightedOtherFiles = 0;
+    let otherFilesWithMatches = 0;
+    const totalOtherFiles = state.files.length - 1;
+    
+    // First, highlight and scroll the SOURCE panel to the clicked line
+    const sourcePanel = document.querySelector(`.compare-panel[data-index="${sourceFileIndex}"]`);
+    if (sourcePanel) {
+        const sourceLines = sourcePanel.querySelectorAll('.log-line[data-timestamp]');
+        let sourceClickedLine = null;
         
-        lines.forEach(line => {
+        // Find and highlight the exact clicked line in the source panel
+        sourceLines.forEach(line => {
+            const lineNum = parseInt(line.getAttribute('data-line'));
+            if (lineNum === sourceLine) {
+                line.classList.add('time-sync-source');
+                sourceClickedLine = line;
+            }
+            // Also highlight nearby lines in source within the time range
             const lineTimestamp = line.getAttribute('data-timestamp');
             if (lineTimestamp) {
                 const lineTime = parseTimestamp(lineTimestamp);
                 if (lineTime && lineTime >= minTime && lineTime <= maxTime) {
                     line.classList.add('time-sync-highlight');
-                    fileHighlightCount++;
-                    totalHighlighted++;
-                    
-                    if (!firstMatch) {
-                        firstMatch = line;
+                }
+            }
+        });
+        
+        // Scroll source panel to center the clicked line
+        if (sourceClickedLine) {
+            const panelContent = sourcePanel.querySelector('.compare-panel-content');
+            if (panelContent) {
+                const lineTop = sourceClickedLine.offsetTop;
+                const panelHeight = panelContent.clientHeight;
+                const scrollPos = lineTop - (panelHeight / 2);
+                panelContent.scrollTop = Math.max(0, scrollPos);
+            }
+        }
+    }
+    
+    // Now find and line up matches in all OTHER panels
+    document.querySelectorAll('.compare-panel').forEach((panel, panelIndex) => {
+        // Skip the source panel - we only care about OTHER files
+        if (panelIndex === sourceFileIndex) return;
+        
+        const lines = panel.querySelectorAll('.log-line[data-timestamp]');
+        let closestMatch = null;
+        let closestDelta = Infinity;
+        let fileHighlightCount = 0;
+        
+        console.log(`Time Sync - File ${panelIndex}: ${lines.length} timestamped lines to check`);
+        
+        lines.forEach(line => {
+            const lineTimestamp = line.getAttribute('data-timestamp');
+            if (lineTimestamp) {
+                const lineTime = parseTimestamp(lineTimestamp);
+                if (lineTime) {
+                    if (lineTime >= minTime && lineTime <= maxTime) {
+                        line.classList.add('time-sync-highlight');
+                        fileHighlightCount++;
+                        totalHighlightedOtherFiles++;
+                        
+                        // Track the closest match to the target time for best alignment
+                        const delta = Math.abs(lineTime - targetTime);
+                        if (delta < closestDelta) {
+                            closestDelta = delta;
+                            closestMatch = line;
+                        }
                     }
                 }
             }
         });
         
-        // Scroll to first match in each panel
-        if (firstMatch) {
+        if (fileHighlightCount > 0) {
+            otherFilesWithMatches++;
+        }
+        
+        console.log(`Time Sync - File ${panelIndex}: ${fileHighlightCount} matches found in OTHER file`);
+        
+        // Scroll OTHER panel to the closest matching line, centering it
+        // This visually lines up all panels at the same timeframe
+        if (closestMatch) {
             const panelContent = panel.querySelector('.compare-panel-content');
             if (panelContent) {
-                // Calculate scroll position to center the line
-                const lineTop = firstMatch.offsetTop;
+                const lineTop = closestMatch.offsetTop;
                 const panelHeight = panelContent.clientHeight;
                 const scrollPos = lineTop - (panelHeight / 2);
                 panelContent.scrollTop = Math.max(0, scrollPos);
@@ -3916,26 +6392,41 @@ function syncToTimestamp(timestampStr, sourceFileIndex, sourceLine) {
         }
     });
     
-    // Update status display
+    console.log(`Time Sync - Total matches in OTHER files: ${totalHighlightedOtherFiles} across ${totalOtherFiles} other files`);
+    
+    // Update status display - report matches in OTHER files only
     const statusEl = document.getElementById('timeSyncStatus');
     if (statusEl) {
         const thresholdSeconds = state.timeSyncRange / 1000;
+        const fileMatchSummary = otherFilesWithMatches === totalOtherFiles
+            ? `all ${totalOtherFiles} other file${totalOtherFiles !== 1 ? 's' : ''}`
+            : `${otherFilesWithMatches} of ${totalOtherFiles} other file${totalOtherFiles !== 1 ? 's' : ''}`;
+        
         statusEl.innerHTML = `
             <div style="padding: 0.75rem; background: var(--bg-tertiary); border-radius: var(--radius-md); border-left: 3px solid var(--accent-primary);">
                 <strong>Synced to:</strong> ${escapeHtml(timestampStr)}<br>
                 <span style="color: var(--text-tertiary); font-size: 0.875rem;">
-                    ${totalHighlighted} matching line${totalHighlighted !== 1 ? 's' : ''} found within ±${thresholdSeconds} second${thresholdSeconds !== 1 ? 's' : ''} across ${state.files.length} file${state.files.length !== 1 ? 's' : ''}
+                    ${totalHighlightedOtherFiles > 0 
+                        ? `${totalHighlightedOtherFiles} matching line${totalHighlightedOtherFiles !== 1 ? 's' : ''} found in ${fileMatchSummary} within ±${thresholdSeconds}s — panels lined up`
+                        : `No matching timestamps found in other files within ±${thresholdSeconds}s`}
                 </span>
             </div>
         `;
     }
     
-    showToast(`Time sync: Found ${totalHighlighted} matching lines`, 'success');
+    if (totalHighlightedOtherFiles > 0) {
+        showToast(`Time sync: ${totalHighlightedOtherFiles} match${totalHighlightedOtherFiles !== 1 ? 'es' : ''} in ${otherFilesWithMatches} other file${otherFilesWithMatches !== 1 ? 's' : ''} — lined up`, 'success');
+    } else {
+        showToast(`No matching timestamps in other files within ±${state.timeSyncRange / 1000}s`, 'warning');
+    }
 }
 
 function clearTimeSyncHighlights() {
     document.querySelectorAll('.time-sync-highlight').forEach(line => {
         line.classList.remove('time-sync-highlight');
+    });
+    document.querySelectorAll('.time-sync-source').forEach(line => {
+        line.classList.remove('time-sync-source');
     });
     
     const statusEl = document.getElementById('timeSyncStatus');
@@ -3947,33 +6438,39 @@ function clearTimeSyncHighlights() {
 function parseTimestamp(timestampStr) {
     // Try various timestamp formats and convert to milliseconds since epoch
     
-    // Format: 2024-01-19 14:25:30 or 2024-01-19T14:25:30
+    // Format: 2024-01-19 14:25:30.123 or 2024-01-19T14:25:30.123
     let match = timestampStr.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
     if (match) {
         const [, year, month, day, hour, min, sec, ms] = match;
         return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
     }
     
-    // Format: 19/01/2024 14:25:30
+    // Format: 19/01/2024 14:25:30.123
     match = timestampStr.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
     if (match) {
         const [, day, month, year, hour, min, sec, ms] = match;
         return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
     }
     
-    // Format: 01-19-2024 14:25:30
+    // Format: 01-19-2024 14:25:30.123
     match = timestampStr.match(/(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
     if (match) {
         const [, month, day, year, hour, min, sec, ms] = match;
         return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
     }
     
-    // Format: [14:25:30] (time only - use today's date)
+    // Format: [14:25:30.123] or 14:25:30.123 (time only - use today's date)
     match = timestampStr.match(/\[?(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?\]?/);
     if (match) {
         const today = new Date();
         const [, hour, min, sec, ms] = match;
         return new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour, min, sec, ms || 0).getTime();
+    }
+    
+    // If no pattern matched, try standard Date parsing as fallback
+    const fallbackTime = Date.parse(timestampStr);
+    if (!isNaN(fallbackTime)) {
+        return fallbackTime;
     }
     
     return null;
