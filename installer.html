@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traka Log Analyzer â€” Setup</title>
+    <style>
+        /* ============================================
+           Traka Log Analyzer â€” Installer UI
+           Dark theme, Midnight Ember palette
+           ============================================ */
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-primary: #0d0f12;
+            --bg-secondary: #151820;
+            --bg-tertiary: #1a1e28;
+            --bg-card: #1e2230;
+            --border: #2a303c;
+            --border-light: #363e4f;
+            --text-primary: #f0f2f5;
+            --text-secondary: #c8cdd5;
+            --text-dim: #9aa1b0;
+            --text-muted: #6b7280;
+            --accent: #ff6b35;
+            --accent-hover: #ff8555;
+            --accent-glow: rgba(255, 107, 53, 0.15);
+            --success: #34d399;
+            --error: #f87171;
+            --warning: #fbbf24;
+        }
+        
+        @font-face {
+            font-family: 'System';
+            src: local('Segoe UI'), local('Helvetica Neue'), local('Arial');
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+            user-select: none;
+            -webkit-app-region: no-drag;
+        }
+        
+        /* ---- Custom title bar ---- */
+        .titlebar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 36px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            -webkit-app-region: drag;
+            padding: 0 8px;
+        }
+        
+        .titlebar-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .titlebar-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+        }
+        
+        .titlebar-text {
+            font-size: 12px;
+            color: var(--text-dim);
+            font-weight: 500;
+        }
+        
+        .titlebar-controls {
+            display: flex;
+            -webkit-app-region: no-drag;
+        }
+        
+        .titlebar-btn {
+            width: 36px;
+            height: 36px;
+            border: none;
+            background: transparent;
+            color: var(--text-dim);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s;
+        }
+        
+        .titlebar-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+        .titlebar-btn.close:hover { background: #e81123; color: white; }
+        
+        /* ---- Main layout ---- */
+        .installer-container {
+            display: flex;
+            height: calc(100vh - 36px);
+        }
+        
+        /* ---- Left sidebar ---- */
+        .sidebar {
+            width: 220px;
+            min-width: 220px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 32px 0;
+        }
+        
+        .sidebar-logo {
+            text-align: center;
+            margin-bottom: 32px;
+            padding: 0 24px;
+        }
+        
+        .sidebar-logo img {
+            width: 56px;
+            height: 56px;
+            margin-bottom: 12px;
+            filter: drop-shadow(0 4px 12px rgba(255, 107, 53, 0.3));
+        }
+        
+        .sidebar-logo h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+        }
+        
+        .sidebar-logo .brand {
+            color: var(--accent);
+        }
+        
+        .sidebar-logo p {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+        
+        /* Steps navigation */
+        .steps {
+            flex: 1;
+            padding: 0 16px;
+        }
+        
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 4px;
+            transition: all 0.3s ease;
+        }
+        
+        .step-item.active {
+            background: var(--accent-glow);
+        }
+        
+        .step-number {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            border: 2px solid var(--border-light);
+            color: var(--text-muted);
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+        
+        .step-item.active .step-number {
+            border-color: var(--accent);
+            background: var(--accent);
+            color: white;
+        }
+        
+        .step-item.completed .step-number {
+            border-color: var(--success);
+            background: var(--success);
+            color: white;
+        }
+        
+        .step-item.completed .step-number::after {
+            content: '\2713';
+        }
+        
+        .step-label {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+        
+        .step-item.active .step-label { color: var(--text-primary); }
+        .step-item.completed .step-label { color: var(--text-secondary); }
+        
+        /* Sidebar footer */
+        .sidebar-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+        }
+        
+        .sidebar-footer p {
+            font-size: 10px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+        
+        /* ---- Main content area ---- */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        /* Page container */
+        .page {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 80px;
+            padding: 40px 48px;
+            opacity: 0;
+            transform: translateX(30px);
+            transition: opacity 0.35s ease, transform 0.35s ease;
+            pointer-events: none;
+            overflow-y: auto;
+        }
+        
+        .page.active {
+            opacity: 1;
+            transform: translateX(0);
+            pointer-events: all;
+        }
+        
+        .page.exit-left {
+            opacity: 0;
+            transform: translateX(-30px);
+        }
+        
+        .page h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+        
+        .page h1 .accent { color: var(--accent); }
+        
+        .page .subtitle {
+            font-size: 14px;
+            color: var(--text-dim);
+            margin-bottom: 28px;
+            line-height: 1.5;
+        }
+        
+        /* ---- Welcome page ---- */
+        .welcome-features {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            transition: border-color 0.2s;
+        }
+        
+        .feature-card:hover { border-color: var(--border-light); }
+        
+        .feature-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--accent-glow);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .feature-card h3 {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: var(--text-primary);
+        }
+        
+        .feature-card p {
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+        
+        .version-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 6px 14px;
+            font-size: 12px;
+            color: var(--text-dim);
+            margin-bottom: 20px;
+        }
+        
+        .version-badge .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        
+        /* ---- License page ---- */
+        .license-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px 24px;
+            max-height: 280px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+        }
+        
+        .license-box::-webkit-scrollbar { width: 6px; }
+        .license-box::-webkit-scrollbar-track { background: transparent; }
+        .license-box::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+        
+        .license-box h3 {
+            color: var(--accent);
+            font-size: 13px;
+            margin: 16px 0 8px 0;
+        }
+        
+        .license-box h3:first-child { margin-top: 0; }
+        
+        .license-accept {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+        
+        .license-accept input[type="checkbox"] {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border-light);
+            border-radius: 5px;
+            background: var(--bg-card);
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        
+        .license-accept input[type="checkbox"]:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        
+        .license-accept input[type="checkbox"]:checked::after {
+            content: '\2713';
+            position: absolute;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        .license-accept label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+        
+        /* ---- Location page ---- */
+        .path-input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .path-input {
+            flex: 1;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: 'Consolas', 'Cascadia Code', monospace;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        
+        .path-input:focus { border-color: var(--accent); }
+        
+        .browse-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 20px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        
+        .browse-btn:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--border-light);
+            color: var(--text-primary);
+        }
+        
+        .space-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--text-dim);
+            margin-bottom: 20px;
+        }
+        
+        .space-info .icon { font-size: 16px; }
+        
+        .shortcut-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        
+        .shortcut-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+        
+        .shortcut-option input[type="checkbox"] {
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--border-light);
+            border-radius: 4px;
+            background: var(--bg-card);
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+        }
+        
+        .shortcut-option input[type="checkbox"]:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        
+        .shortcut-option input[type="checkbox"]:checked::after {
+            content: '\2713';
+            position: absolute;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        .shortcut-option label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+        
+        /* ---- Installing page ---- */
+        .install-status {
+            text-align: center;
+            padding-top: 40px;
+        }
+        
+        .install-icon {
+            width: 72px;
+            height: 72px;
+            margin: 0 auto 24px auto;
+            border-radius: 20px;
+            background: var(--accent-glow);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .install-icon img {
+            width: 40px;
+            height: 40px;
+        }
+        
+        /* Spinner ring around icon during install */
+        .install-icon .spinner-ring {
+            position: absolute;
+            inset: -4px;
+            border: 3px solid transparent;
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        .install-icon .spinner-ring.done {
+            animation: none;
+            border-color: var(--success);
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .install-status h2 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .install-status .status-text {
+            font-size: 13px;
+            color: var(--text-dim);
+            margin-bottom: 32px;
+        }
+        
+        /* Progress bar */
+        .progress-container {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto 16px auto;
+        }
+        
+        .progress-bar-bg {
+            height: 6px;
+            background: var(--bg-card);
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+            border-radius: 3px;
+            width: 0%;
+            transition: width 0.4s ease;
+        }
+        
+        .progress-bar-fill.complete {
+            background: linear-gradient(90deg, var(--success), #5eead4);
+        }
+        
+        .progress-percent {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+        
+        .install-log {
+            margin-top: 24px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            max-height: 120px;
+            overflow-y: auto;
+            text-align: left;
+            max-width: 440px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .install-log::-webkit-scrollbar { width: 4px; }
+        .install-log::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
+        
+        .install-log-entry {
+            font-size: 11px;
+            font-family: 'Consolas', monospace;
+            color: var(--text-dim);
+            padding: 2px 0;
+        }
+        
+        .install-log-entry.success { color: var(--success); }
+        .install-log-entry.error { color: var(--error); }
+        
+        /* ---- Complete page ---- */
+        .complete-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px auto;
+            border-radius: 50%;
+            background: rgba(52, 211, 153, 0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            animation: scaleIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        
+        @keyframes scaleIn {
+            from { transform: scale(0); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        
+        .complete-text {
+            text-align: center;
+            padding-top: 30px;
+        }
+        
+        .complete-text h1 {
+            margin-bottom: 8px;
+        }
+        
+        .complete-text .subtitle {
+            margin-bottom: 32px;
+        }
+        
+        .launch-option {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 24px;
+        }
+        
+        .launch-option input[type="checkbox"] {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border-light);
+            border-radius: 5px;
+            background: var(--bg-card);
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+        }
+        
+        .launch-option input[type="checkbox"]:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        
+        .launch-option input[type="checkbox"]:checked::after {
+            content: '\2713';
+            position: absolute;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        .launch-option label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+        
+        .install-summary {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            max-width: 360px;
+            margin: 24px auto 0 auto;
+        }
+        
+        .summary-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            text-align: left;
+        }
+        
+        .summary-item .label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        
+        .summary-item .value {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-family: 'Consolas', monospace;
+        }
+        
+        /* ---- Bottom action bar ---- */
+        .action-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding: 0 48px;
+            gap: 12px;
+        }
+        
+        .btn {
+            padding: 10px 28px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--bg-tertiary);
+            border-color: var(--border-light);
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+            box-shadow: 0 4px 16px rgba(255, 107, 53, 0.3);
+        }
+        
+        .btn-success {
+            background: var(--success);
+            color: #0d0f12;
+        }
+        
+        .btn-success:hover:not(:disabled) {
+            box-shadow: 0 4px 16px rgba(52, 211, 153, 0.3);
+        }
+        
+        /* Scrollbar global */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        
+        /* Animated gradient border top */
+        .gradient-line {
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent), #ff8555, var(--accent));
+            background-size: 200% 100%;
+            animation: gradientShift 3s ease infinite;
+        }
+        
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Custom title bar -->
+    <div class="titlebar">
+        <div class="titlebar-left">
+            <img src="img/trakaweb-logo.png" class="titlebar-icon" alt="">
+            <span class="titlebar-text">Traka Log Analyzer â€” Setup</span>
+        </div>
+        <div class="titlebar-controls">
+            <button class="titlebar-btn" onclick="installerAPI.minimize()" title="Minimize">&#x2013;</button>
+            <button class="titlebar-btn close" onclick="installerAPI.closeWindow()" title="Close">&#x2715;</button>
+        </div>
+    </div>
+    <div class="gradient-line"></div>
+    
+    <div class="installer-container">
+        <!-- Sidebar with steps -->
+        <div class="sidebar">
+            <div class="sidebar-logo">
+                <img src="img/trakaweb-logo.png" alt="Traka">
+                <h2><span class="brand">Traka</span> Log Analyzer</h2>
+                <p>Desktop Edition Setup</p>
+            </div>
+            
+            <div class="steps">
+                <div class="step-item active" data-step="0">
+                    <div class="step-number">1</div>
+                    <span class="step-label">Welcome</span>
+                </div>
+                <div class="step-item" data-step="1">
+                    <div class="step-number">2</div>
+                    <span class="step-label">License</span>
+                </div>
+                <div class="step-item" data-step="2">
+                    <div class="step-number">3</div>
+                    <span class="step-label">Install Location</span>
+                </div>
+                <div class="step-item" data-step="3">
+                    <div class="step-number">4</div>
+                    <span class="step-label">Installing</span>
+                </div>
+                <div class="step-item" data-step="4">
+                    <div class="step-number">5</div>
+                    <span class="step-label">Complete</span>
+                </div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <p>Version 3.0.0<br>ASSA ABLOY &mdash; Traka</p>
+            </div>
+        </div>
+        
+        <!-- Main content area -->
+        <div class="main-content">
+            <!-- Page 0: Welcome -->
+            <div class="page active" id="page-welcome">
+                <div class="version-badge">
+                    <span class="dot"></span>
+                    Version 3.0.0 &mdash; Desktop Edition
+                </div>
+                <h1>Welcome to <span class="accent">Traka Log Analyzer</span></h1>
+                <p class="subtitle">
+                    This wizard will guide you through the installation.<br>
+                    The application will be installed on your computer with all required components.
+                </p>
+                
+                <div class="welcome-features">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h8" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
+                        </div>
+                        <h3>Log Viewer</h3>
+                        <p>View and search through Traka log files with live tail monitoring</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2v12M12 2v12M1 8h14" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
+                        </div>
+                        <h3>Side-by-Side Compare</h3>
+                        <p>Compare multiple log files simultaneously with time synchronisation</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2L2 14h12L8 2z" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 6v4M8 11.5v.5" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round"/></svg>
+                        </div>
+                        <h3>Issue Detection</h3>
+                        <p>Automatic detection of 50+ known Traka issue patterns</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="#ff6b35" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </div>
+                        <h3>Auto Discovery</h3>
+                        <p>Automatically finds Traka logs on the local machine</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Page 1: License -->
+            <div class="page" id="page-license">
+                <h1>License <span class="accent">Agreement</span></h1>
+                <p class="subtitle">Please review and accept the license agreement to continue.</p>
+                
+                <div class="license-box">
+                    <h3>Traka Log Analyzer â€” Desktop Edition</h3>
+                    <p>Copyright &copy; 2026 Traka, an ASSA ABLOY company. All rights reserved.</p>
+                    
+                    <h3>Permitted Use</h3>
+                    <p>This software is provided by Traka for use by authorised support engineers, integrators, and customers. You may install it on any machine where Traka products are deployed or being supported.</p>
+                    
+                    <h3>What This Application Does</h3>
+                    <p>The Traka Log Analyzer reads log files from Traka Business Engine, Comms Engine, Integration Engine, and integration plugins. It provides real-time log monitoring, side-by-side file comparison with time synchronisation, automatic detection of 50+ known issue patterns, and a searchable knowledge base of solutions.</p>
+                    
+                    <h3>Data Privacy</h3>
+                    <p>This application runs entirely on your local machine. No log data is transmitted over any network. No telemetry or analytics are collected.</p>
+                    
+                    <h3>System Requirements</h3>
+                    <p>Windows 10 (64-bit) or later. 4 GB RAM minimum (8 GB recommended). 250 MB disk space.</p>
+                </div>
+                
+                <label class="license-accept">
+                    <input type="checkbox" id="acceptLicense" onchange="updateButtons()">
+                    <label for="acceptLicense">I accept the terms of the License Agreement</label>
+                </label>
+            </div>
+            
+            <!-- Page 2: Install Location -->
+            <div class="page" id="page-location">
+                <h1>Choose Install <span class="accent">Location</span></h1>
+                <p class="subtitle">Select where you would like to install Traka Log Analyzer.</p>
+                
+                <div class="path-input-group">
+                    <input type="text" class="path-input" id="installPath" value="C:\Program Files\Traka Log Analyzer" readonly>
+                    <button class="browse-btn" onclick="browseForFolder()">Browse...</button>
+                </div>
+                
+                <div class="space-info">
+                    <span class="icon">&#128190;</span>
+                    <span>Required space: ~250 MB &nbsp;&bull;&nbsp; Available: <span id="freeSpace">calculating...</span></span>
+                </div>
+                
+                <div class="shortcut-options">
+                    <label class="shortcut-option">
+                        <input type="checkbox" id="desktopShortcut" checked>
+                        <label for="desktopShortcut">Create Desktop shortcut</label>
+                    </label>
+                    <label class="shortcut-option">
+                        <input type="checkbox" id="startMenuShortcut" checked>
+                        <label for="startMenuShortcut">Create Start Menu entry</label>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Page 3: Installing -->
+            <div class="page" id="page-installing">
+                <div class="install-status">
+                    <div class="install-icon">
+                        <img src="img/trakaweb-logo.png" alt="">
+                        <div class="spinner-ring" id="installSpinner"></div>
+                    </div>
+                    <h2 id="installTitle">Installing...</h2>
+                    <p class="status-text" id="installStatusText">Preparing files...</p>
+                    
+                    <div class="progress-container">
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="progressBar"></div>
+                        </div>
+                        <p class="progress-percent" id="progressPercent">0%</p>
+                    </div>
+                    
+                    <div class="install-log" id="installLog"></div>
+                </div>
+            </div>
+            
+            <!-- Page 4: Complete -->
+            <div class="page" id="page-complete">
+                <div class="complete-text">
+                    <div class="complete-icon">&#10003;</div>
+                    <h1>Installation <span class="accent">Complete</span></h1>
+                    <p class="subtitle">Traka Log Analyzer has been successfully installed on your computer.</p>
+                    
+                    <div class="install-summary">
+                        <div class="summary-item">
+                            <div class="label">Location</div>
+                            <div class="value" id="summaryPath">-</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="label">Version</div>
+                            <div class="value">3.0.0</div>
+                        </div>
+                    </div>
+                    
+                    <label class="launch-option">
+                        <input type="checkbox" id="launchAfter" checked>
+                        <label for="launchAfter">Launch Traka Log Analyzer now</label>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Action bar -->
+            <div class="action-bar">
+                <button class="btn btn-secondary" id="btnCancel" onclick="cancelInstall()">Cancel</button>
+                <button class="btn btn-secondary" id="btnBack" onclick="prevPage()" style="display:none">Back</button>
+                <button class="btn btn-primary" id="btnNext" onclick="nextPage()">Next</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ============================================
+        //  Installer UI Logic
+        // ============================================
+        
+        let currentStep = 0;
+        const totalSteps = 5;
+        const pageIds = ['page-welcome', 'page-license', 'page-location', 'page-installing', 'page-complete'];
+        
+        function goToPage(stepIndex) {
+            // Animate out current page
+            const currentPage = document.querySelector('.page.active');
+            if (currentPage) {
+                currentPage.classList.add('exit-left');
+                currentPage.classList.remove('active');
+            }
+            
+            // Update step indicators
+            document.querySelectorAll('.step-item').forEach((item, i) => {
+                item.classList.remove('active', 'completed');
+                if (i < stepIndex) item.classList.add('completed');
+                if (i === stepIndex) item.classList.add('active');
+            });
+            
+            // Show number for incomplete steps, checkmark for completed (via CSS)
+            document.querySelectorAll('.step-number').forEach((num, i) => {
+                if (i < stepIndex) {
+                    num.textContent = '';  // CSS ::after adds checkmark
+                } else {
+                    num.textContent = i + 1;
+                }
+            });
+            
+            // Animate in new page
+            setTimeout(() => {
+                const newPage = document.getElementById(pageIds[stepIndex]);
+                if (currentPage) currentPage.classList.remove('exit-left');
+                newPage.classList.add('active');
+            }, 100);
+            
+            currentStep = stepIndex;
+            updateButtons();
+        }
+        
+        function nextPage() {
+            if (currentStep === 2) {
+                // Starting installation
+                goToPage(3);
+                startInstallation();
+            } else if (currentStep < totalSteps - 1) {
+                goToPage(currentStep + 1);
+            } else {
+                // Finish
+                finishInstall();
+            }
+        }
+        
+        function prevPage() {
+            if (currentStep > 0 && currentStep < 3) {
+                goToPage(currentStep - 1);
+            }
+        }
+        
+        function updateButtons() {
+            const btnBack = document.getElementById('btnBack');
+            const btnNext = document.getElementById('btnNext');
+            const btnCancel = document.getElementById('btnCancel');
+            
+            // Back button visibility
+            btnBack.style.display = (currentStep > 0 && currentStep < 3) ? 'inline-flex' : 'none';
+            
+            // Cancel button
+            if (currentStep >= 3) {
+                btnCancel.style.display = 'none';
+            } else {
+                btnCancel.style.display = 'inline-flex';
+            }
+            
+            // Next button text and state
+            if (currentStep === 1) {
+                // License page â€” require acceptance
+                const accepted = document.getElementById('acceptLicense').checked;
+                btnNext.disabled = !accepted;
+                btnNext.textContent = 'Next';
+                btnNext.className = 'btn btn-primary';
+            } else if (currentStep === 2) {
+                btnNext.disabled = false;
+                btnNext.textContent = 'Install';
+                btnNext.className = 'btn btn-primary';
+            } else if (currentStep === 3) {
+                // Installing â€” hide next
+                btnNext.style.display = 'none';
+                return;
+            } else if (currentStep === 4) {
+                btnNext.textContent = 'Finish';
+                btnNext.className = 'btn btn-success';
+                btnNext.disabled = false;
+                btnNext.style.display = 'inline-flex';
+            } else {
+                btnNext.disabled = false;
+                btnNext.textContent = 'Next';
+                btnNext.className = 'btn btn-primary';
+            }
+            
+            btnNext.style.display = 'inline-flex';
+        }
+        
+        function cancelInstall() {
+            if (installerAPI) {
+                installerAPI.closeWindow();
+            }
+        }
+        
+        // ---- Installation logic ----
+        
+        function addLogEntry(text, type = '') {
+            const log = document.getElementById('installLog');
+            const entry = document.createElement('div');
+            entry.className = 'install-log-entry' + (type ? ` ${type}` : '');
+            entry.textContent = text;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function setProgress(percent, statusText) {
+            document.getElementById('progressBar').style.width = percent + '%';
+            document.getElementById('progressPercent').textContent = Math.round(percent) + '%';
+            if (statusText) {
+                document.getElementById('installStatusText').textContent = statusText;
+            }
+        }
+        
+        async function startInstallation() {
+            const installPath = document.getElementById('installPath').value;
+            const desktopShortcut = document.getElementById('desktopShortcut').checked;
+            const startMenuShortcut = document.getElementById('startMenuShortcut').checked;
+            
+            addLogEntry('Starting installation...');
+            setProgress(5, 'Creating directory...');
+            
+            try {
+                const result = await installerAPI.install({
+                    installPath,
+                    desktopShortcut,
+                    startMenuShortcut
+                });
+                
+                if (result.success) {
+                    // Installation completed
+                    lastInstallPath = result.installPath || installPath;
+                    setProgress(100, 'Installation complete!');
+                    document.getElementById('progressBar').classList.add('complete');
+                    document.getElementById('installSpinner').classList.add('done');
+                    document.getElementById('installTitle').textContent = 'Installation Complete';
+                    addLogEntry('Installation finished successfully!', 'success');
+                    
+                    // Update summary
+                    document.getElementById('summaryPath').textContent = installPath;
+                    
+                    // Move to complete page after a moment
+                    setTimeout(() => goToPage(4), 1200);
+                } else {
+                    throw new Error(result.error || 'Installation failed');
+                }
+            } catch (error) {
+                addLogEntry('ERROR: ' + error.message, 'error');
+                setProgress(0, 'Installation failed');
+                document.getElementById('installTitle').textContent = 'Installation Failed';
+                document.getElementById('installSpinner').style.display = 'none';
+            }
+        }
+        
+        let lastInstallPath = '';
+        
+        function finishInstall() {
+            const launchAfter = document.getElementById('launchAfter').checked;
+            if (installerAPI) {
+                installerAPI.finish({ launch: launchAfter, installPath: lastInstallPath });
+            }
+        }
+        
+        async function browseForFolder() {
+            if (installerAPI) {
+                const result = await installerAPI.browseFolder();
+                if (result) {
+                    document.getElementById('installPath').value = result;
+                }
+            }
+        }
+        
+        // ---- Listen for progress updates from main process ----
+        if (window.installerAPI && window.installerAPI.onProgress) {
+            window.installerAPI.onProgress((data) => {
+                if (data.percent !== undefined) setProgress(data.percent, data.status);
+                if (data.log) addLogEntry(data.log, data.logType || '');
+            });
+        }
+        
+        // Calculate free space on page load
+        if (window.installerAPI && window.installerAPI.getDiskSpace) {
+            window.installerAPI.getDiskSpace('C:').then(space => {
+                if (space) {
+                    document.getElementById('freeSpace').textContent = 
+                        (space / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+                }
+            });
+        }
+        
+        // Initial state
+        updateButtons();
+    </script>
+</body>
+</html>
+

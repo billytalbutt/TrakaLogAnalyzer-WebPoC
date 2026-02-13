@@ -491,16 +491,23 @@ async function autoLoadDiscoveredFilesForCompare(files) {
     }
     
     // Sort files by engine type priority (Business → Comms → Integration → Plugins)
-    const sortedFiles = sortFilesForCompare(files);
+    const sortedFiles = sortFilesForCompare(files).filter(Boolean);
+    const totalFiles = sortedFiles.length;
     
+    // Load files in parallel batches of 3 for much faster loading on slow I/O (VMs, network drives)
+    const BATCH_SIZE = 3;
     let loadedCount = 0;
-    for (const file of sortedFiles) {
-        if (file) {
-            // Update loader text with progress (caller already shows the global loader)
-            updateGlobalLoaderText('Loading Log Files...', `Loading ${file.name} (${loadedCount + 1}/${sortedFiles.length})`);
-            const result = await loadFileFromPath(file.path, file.engineType || null);
-            if (result) loadedCount++;
-        }
+    
+    for (let i = 0; i < totalFiles; i += BATCH_SIZE) {
+        const batch = sortedFiles.slice(i, i + BATCH_SIZE);
+        const batchNames = batch.map(f => f.name).join(', ');
+        updateGlobalLoaderText('Loading Log Files...', `Loading ${batchNames} (${Math.min(i + BATCH_SIZE, totalFiles)}/${totalFiles})`);
+        
+        // Load batch in parallel
+        const results = await Promise.all(
+            batch.map(file => loadFileFromPath(file.path, file.engineType || null))
+        );
+        loadedCount += results.filter(Boolean).length;
     }
     
     if (loadedCount > 0) {

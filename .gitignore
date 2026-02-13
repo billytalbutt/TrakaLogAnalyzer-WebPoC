@@ -1,6 +1,8 @@
 node_modules/
 dist/
+dist-installer/
 deploy/
+build/sfx/
 *.log
 .DS_Store
 *.backup

@@ -59,6 +59,8 @@
       "css/**/*",
       "js/**/*",
       "img/**/*",
+      "installer.html",
+      "installer-preload.js",
       "user-guide.html",
       "docs/**/*"
     ],
