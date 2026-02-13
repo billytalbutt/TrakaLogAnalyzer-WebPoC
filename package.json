@@ -3,7 +3,10 @@
   "version": "3.0.0",
   "description": "Traka Log Analyzer - Desktop Edition with automatic log file discovery",
   "main": "main.js",
-  "author": "Traka",
+  "author": {
+    "name": "Traka",
+    "email": "support@traka.com"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -21,11 +24,33 @@
   "build": {
     "appId": "com.traka.loganalyzer",
     "productName": "Traka Log Analyzer",
+    "copyright": "Copyright (c) 2026 Traka, an ASSA ABLOY company",
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "img/trakaweb-logo.png"
+      "icon": "build/icon.ico",
+      "signtoolOptions": {
+        "publisherName": "Traka - ASSA ABLOY"
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "license": "build/license.txt",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Traka Log Analyzer",
+      "include": "build/installer.nsh",
+      "installerLanguages": [
+        "en_US"
+      ],
+      "menuCategory": "Traka",
+      "uninstallDisplayName": "Traka Log Analyzer"
     },
     "files": [
       "main.js",
@@ -33,10 +58,14 @@
       "index.html",
       "css/**/*",
       "js/**/*",
-      "img/**/*"
+      "img/**/*",
+      "user-guide.html",
+      "docs/**/*"
     ],
     "directories": {
-      "output": "dist"
-    }
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "extraResources": []
   }
 }

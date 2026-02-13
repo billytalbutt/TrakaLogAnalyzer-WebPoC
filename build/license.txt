@@ -1,0 +1,43 @@
+TRAKA LOG ANALYZER
+Desktop Edition - Version 3.0.0
+Part of the TrakaWEB Tools Suite
+
+Copyright (c) 2026 Traka, an ASSA ABLOY company.
+All rights reserved.
+
+------------------------------------------------------------------------
+
+SOFTWARE LICENSE AND USAGE AGREEMENT
+
+This software is provided by Traka, a division of ASSA ABLOY, for use by authorised Traka support engineers, integrators, and customers.
+
+PERMITTED USE
+- Analyse, view, and compare Traka log files
+- Use the built-in knowledge base for troubleshooting
+- Generate reports for internal support purposes
+- Install on any machine where Traka products are deployed
+
+WHAT THIS APPLICATION DOES
+The Traka Log Analyzer reads log files from Traka Business Engine, Comms Engine, Integration Engine, and integration plugins. It provides:
+
+  - Real-time log monitoring (Live Tail)
+  - Side-by-side file comparison with time synchronisation
+  - Automatic detection of 50+ known issue patterns
+  - A searchable knowledge base of solutions
+  - Custom text highlighting for efficient log analysis
+  - PDF report generation
+
+DATA PRIVACY
+This application runs entirely on your local machine. No log data is transmitted over any network. No telemetry or analytics are collected.
+
+SYSTEM REQUIREMENTS
+  - Windows 10 (64-bit) or later
+  - 4 GB RAM minimum (8 GB recommended)
+  - 250 MB disk space
+
+SUPPORT
+For questions or issues, contact your Traka support representative.
+
+------------------------------------------------------------------------
+
+By clicking "I Agree", you confirm that you are authorised to use this software and accept the terms above.

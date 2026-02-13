@@ -1,5 +1,6 @@
 node_modules/
 dist/
-deploy/TrakaLogAnalyzer-*/
+deploy/
 *.log
 .DS_Store
+*.backup
