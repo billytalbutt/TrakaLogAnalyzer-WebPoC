@@ -1777,10 +1777,7 @@ function updateViewerViewport(force) {
         const cssClass = fileData.isConfig ? 'config-line' : levelClass;
 
         if (entry.isSeparator) {
-            html.push(`<div class="log-line stitched-separator" data-line="-1" data-vindex="${i}">
-                <div class="stitch-divider"></div>
-                <span class="stitch-badge">${displayLine}</span>
-            </div>`);
+            html.push(`<div class="log-line stitched-separator" data-line="-1" data-vindex="${i}">${displayLine}</div>`);
         } else {
             html.push(`<div class="log-line ${cssClass}${searchClass}${currentMatchClass}" data-line="${entry.lineNumber}" data-vindex="${i}">${displayLine || '&nbsp;'}</div>`);
         }
@@ -1862,10 +1859,7 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
             
             // Apply stitched log separator logic
             if (entry.isSeparator) {
-                return `<div class="log-line stitched-separator" data-line="-1">
-                    <div class="stitch-divider"></div>
-                    <span class="stitch-badge">${highlightedLine}</span>
-                </div>`;
+                return `<div class="log-line stitched-separator" data-line="-1">${highlightedLine}</div>`;
             }
             
             return `<div class="log-line ${levelClass}" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
@@ -4826,16 +4820,18 @@ function renderStitchedLogOptimized(fileData, filtered, gutter, content) {
         // Render all at once for smaller files
         const contentHTML = filtered.map((entry, idx) => {
             if (entry.isSeparator) {
-                return `<div class="log-line stitched-separator" data-line="-1">
-                    <div class="stitch-divider"></div>
-                    <span class="stitch-badge">${escapeHtml(entry.raw)}</span>
-                </div>`;
+                return `<div class="log-line stitched-separator" data-line="-1">${escapeHtml(entry.raw)}</div>`;
             }
             
             const levelClass = entry.level !== 'default' ? entry.level : '';
-            const highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
+            let highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
                 ? highlightSearchTerms(escapeHtml(entry.raw))
                 : escapeHtml(entry.raw);
+                
+            // Also apply standard highlight rules to stitched lines
+            if (state.highlightRules && state.highlightRules.length > 0) {
+                highlightedLine = applyHighlightRules(entry.raw, fileData.name);
+            }
             
             const fileColor = getFileColor(entry.sourceFile);
             const sourceIndicator = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
@@ -4866,17 +4862,19 @@ function renderInBatches(filtered, contentDiv, fileData, startIdx, batchSize, ca
         const entry = filtered[i];
         
         if (entry.isSeparator) {
-            batchHTML.push(`<div class="log-line stitched-separator" data-line="-1">
-                <div class="stitch-divider"></div>
-                <span class="stitch-badge">${escapeHtml(entry.raw)}</span>
-            </div>`);
+            batchHTML.push(`<div class="log-line stitched-separator" data-line="-1">${escapeHtml(entry.raw)}</div>`);
             continue;
         }
         
         const levelClass = entry.level !== 'default' ? entry.level : '';
-        const highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
+        let highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
             ? highlightSearchTerms(escapeHtml(entry.raw))
             : escapeHtml(entry.raw);
+            
+        // Also apply standard highlight rules to stitched lines
+        if (state.highlightRules && state.highlightRules.length > 0) {
+            highlightedLine = applyHighlightRules(entry.raw, fileData.name);
+        }
         
         const fileColor = getFileColor(entry.sourceFile);
         const sourceIndicator = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
