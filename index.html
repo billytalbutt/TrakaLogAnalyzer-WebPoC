@@ -428,8 +428,13 @@
                     </div>
                 </div>
                 
+                <!-- Highlight Results Panel (Viewer) -->
+                <div class="highlight-results-panel" id="viewerHighlightResults" style="display: none;"></div>
+                
                 <div class="viewer-footer">
-                    <span id="viewerStats">No file loaded</span>
+                    <div class="viewer-footer-info">
+                        <span id="viewerStats">No file loaded</span>
+                    </div>
                     <div class="footer-controls">
                         <!-- Date Sort Control -->
                         <div class="date-sort-control">
@@ -552,6 +557,9 @@
                     <!-- Drop zone will be dynamically created here when no files are loaded -->
                 </div>
                 
+                <!-- Highlight Results Panel (Compare) -->
+                <div class="highlight-results-panel" id="compareHighlightResults" style="display: none;"></div>
+                
                 <!-- Time Sync Info Panel -->
                 <div class="time-sync-info" id="timeSyncInfo" style="display: none;">
                     <button class="time-sync-toggle-btn" id="timeSyncToggleBtn" onclick="toggleTimeSyncPanel()" title="Collapse/Expand panel">
@@ -587,21 +595,40 @@
                                     type="range" 
                                     id="timeSyncThreshold" 
                                     min="1" 
-                                    max="60" 
+                                    max="1800" 
                                     value="5" 
                                     class="threshold-slider"
                                     oninput="updateTimeSyncThreshold(this.value)"
                                 >
-                                <span class="threshold-label">60s</span>
+                                <span class="threshold-label">30m</span>
                             </div>
                             <div class="threshold-presets">
                                 <button class="btn-preset" onclick="setTimeSyncThreshold(2)">2s</button>
                                 <button class="btn-preset active" onclick="setTimeSyncThreshold(5)">5s</button>
-                                <button class="btn-preset" onclick="setTimeSyncThreshold(10)">10s</button>
                                 <button class="btn-preset" onclick="setTimeSyncThreshold(30)">30s</button>
+                                <button class="btn-preset" onclick="setTimeSyncThreshold(300)">5m</button>
+                                <button class="btn-preset" onclick="setTimeSyncThreshold(1800)">30m</button>
                             </div>
                         </div>
                         
+                        <div class="time-sync-legend">
+                            <div class="time-sync-legend-title">Colour Guide</div>
+                            <div class="time-sync-legend-items">
+                                <div class="time-sync-legend-item">
+                                    <span class="legend-swatch legend-source"></span>
+                                    <span>Selected line (source)</span>
+                                </div>
+                                <div class="time-sync-legend-item">
+                                    <span class="legend-swatch legend-match"></span>
+                                    <span>Matches within threshold</span>
+                                </div>
+                                <div class="time-sync-legend-item">
+                                    <span class="legend-swatch legend-nearest"></span>
+                                    <span>Nearest entry (outside threshold)</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div id="timeSyncStatus" class="time-sync-status"></div>
                     </div>
                 </div>

@@ -300,7 +300,11 @@ async function loadFileFromPath(filePath, engineType = null) {
             updateUI();
             updateFileDropdown();
             updateFilesList();
-            updateCompareView();
+            
+            const comparePage = document.getElementById('page-compare');
+            if (comparePage && comparePage.classList.contains('active')) {
+                updateCompareView();
+            }
             
             return fileData;
         } else {
@@ -705,6 +709,9 @@ const state = {
     timeSyncActive: false,
     timeSyncRange: 5000, // 5 seconds in milliseconds (adjustable)
     timeSyncProcessing: false, // Track if toggle is processing
+    timeSyncScrolling: false, // Suppress sync-scroll during programmatic time-sync scrolling
+    timeSyncLastTarget: null, // { timestampStr, targetTime, sourceFileIndex, sourceLine } for live re-sync
+    timeSyncThresholdTimer: null, // Debounce timer for threshold slider changes
     stitchMode: false,
     stitchedFiles: [], // Files selected for stitching
     stitchedData: null, // Merged log data
@@ -718,6 +725,8 @@ const state = {
         integration: false
     },
     filterDebounceTimer: null, // Debounce timer for filter changes
+    virtualScroll: null,
+    compareVirtualScroll: null,
     settings: {
         detectErrors: true,
         detectExceptions: true,
@@ -939,7 +948,6 @@ function restoreSidebarState() {
 }
 
 function navigateTo(page) {
-    // Check if navigating to a page that needs heavy rendering
     const totalLines = state.files.reduce((sum, f) => sum + f.lines.length, 0);
     const needsLoader = (page === 'compare' || page === 'viewer') && totalLines > 5000;
     
@@ -947,7 +955,6 @@ function navigateTo(page) {
         showGlobalLoader('Loading view...', page === 'compare' ? 'Rendering compare panels' : 'Rendering log viewer');
     }
     
-    // Switch nav and page visibility immediately
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.toggle('active', item.dataset.page === page);
     });
@@ -956,39 +963,46 @@ function navigateTo(page) {
         p.classList.toggle('active', p.id === `page-${page}`);
     });
     
-    // Defer heavy rendering so the loader can paint first
     const doPageInit = () => {
-        if (page === 'compare' && state.files.length > 0) {
-            updateCompareView();
-        }
-        
-        // Ensure the viewer always displays a file when navigated to
-        if (page === 'viewer' && state.files.length > 0) {
-            // Auto-select first file if none selected yet
-            if (state.currentFileIndex === -1) {
-                state.currentFileIndex = 0;
+        try {
+            if (page === 'compare' && state.files.length > 0) {
+                updateCompareView();
             }
-            updateFileDropdown();
-            displayLog(state.files[state.currentFileIndex]);
-        }
-        
-        if (page === 'analytics') {
-            if (state.issues && state.issues.length > 0) {
-                updateAnalytics();
+            
+            if (page === 'viewer' && state.files.length > 0) {
+                if (state.currentFileIndex === -1) {
+                    state.currentFileIndex = 0;
+                }
+                updateFileDropdown();
+                displayLog(state.files[state.currentFileIndex]);
             }
-        }
-        
-        if (page === 'faqs') {
-            renderFAQs();
-        }
-        
-        if (needsLoader) {
-            hideGlobalLoader();
+            
+            if (page === 'analytics') {
+                if (state.issues && state.issues.length > 0) {
+                    updateAnalytics();
+                }
+            }
+            
+            if (page === 'faqs') {
+                renderFAQs();
+            }
+        } catch (err) {
+            console.error('Error during page init:', err);
+            showToast('Error loading page content', 'error');
+        } finally {
+            if (needsLoader) {
+                hideGlobalLoader();
+            }
         }
     };
     
     if (needsLoader) {
-        setTimeout(doPageInit, 50);
+        // Use double-rAF to ensure the loader paints before heavy work begins
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                doPageInit();
+            });
+        });
     } else {
         doPageInit();
     }
@@ -1305,7 +1319,12 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
         updateUI();
         updateFileDropdown();
         updateFilesList();
-        updateCompareView();
+        
+        // Only rebuild compare view if currently on the compare page
+        const comparePage = document.getElementById('page-compare');
+        if (comparePage && comparePage.classList.contains('active')) {
+            updateCompareView();
+        }
         
         // Auto-select first file only if we're not skipping navigation
         if (!skipNavigation && state.currentFileIndex === -1) {
@@ -1360,15 +1379,15 @@ function extractTimestamp(line) {
     // Common timestamp patterns - including milliseconds
     const patterns = [
         // ISO format with optional milliseconds: 2024-01-19 14:25:30.123 or 2024-01-19T14:25:30.123
-        /(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/,
+        /(\d{4}-\d{2}-\d{2}[T\s]+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
         // UK/European format with optional milliseconds: 19/01/2024 14:25:30.123
-        /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/,
+        /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
         // US format with optional milliseconds: 01-19-2024 14:25:30.123
-        /(\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/,
+        /(\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
         // Time only with optional milliseconds in brackets: [14:25:30.123]
-        /\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]/,
+        /\[(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\]/,
         // Time only with optional milliseconds: 14:25:30.123
-        /\b(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\b/
+        /\b(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\b/
     ];
     
     for (const pattern of patterns) {
@@ -1533,6 +1552,176 @@ function displayLog(fileData) {
 }
 
 function renderLogOptimized(fileData, filteredLines, gutter, content) {
+    const VIRTUAL_THRESHOLD = 15000;
+
+    cleanupViewerVirtualScroll();
+
+    if (filteredLines.length < VIRTUAL_THRESHOLD) {
+        content.classList.remove('virtual-scroll-mode');
+        gutter.classList.remove('virtual-scroll-mode');
+        renderLogDirect(fileData, filteredLines, gutter, content);
+        return;
+    }
+
+    setupViewerVirtualScroll(fileData, filteredLines, gutter, content);
+}
+
+function cleanupViewerVirtualScroll() {
+    if (state.virtualScroll && state.virtualScroll.scrollHandler) {
+        state.virtualScroll.contentEl.removeEventListener('scroll', state.virtualScroll.scrollHandler);
+    }
+    state.virtualScroll = null;
+}
+
+function setupViewerVirtualScroll(fileData, filteredLines, gutter, content) {
+    const lineHeight = 20;
+    const totalHeight = filteredLines.length * lineHeight;
+    const OVERSCAN = 200;
+
+    state.virtualScroll = {
+        active: true,
+        filteredLines: filteredLines,
+        fileData: fileData,
+        lineHeight: lineHeight,
+        overscan: OVERSCAN,
+        totalHeight: totalHeight,
+        lastRenderedStart: -1,
+        lastRenderedEnd: -1,
+        searchMatchIndices: new Set(),
+        currentSearchFilteredIndex: -1,
+        scrollHandler: null,
+        contentEl: content,
+        gutterEl: gutter,
+        viewport: null,
+        gutterViewport: null
+    };
+
+    content.innerHTML = '';
+    content.classList.add('virtual-scroll-mode');
+
+    const spacer = document.createElement('div');
+    spacer.className = 'virtual-scroll-spacer';
+    spacer.style.height = totalHeight + 'px';
+    spacer.style.position = 'relative';
+    content.appendChild(spacer);
+
+    const viewport = document.createElement('div');
+    viewport.className = 'virtual-scroll-viewport';
+    spacer.appendChild(viewport);
+    state.virtualScroll.viewport = viewport;
+
+    if (state.settings.showLineNumbers) {
+        gutter.innerHTML = '';
+        gutter.classList.add('virtual-scroll-mode');
+
+        const gutterSpacer = document.createElement('div');
+        gutterSpacer.style.height = totalHeight + 'px';
+        gutterSpacer.style.position = 'relative';
+        gutter.appendChild(gutterSpacer);
+
+        const gutterViewport = document.createElement('div');
+        gutterViewport.className = 'virtual-scroll-viewport';
+        gutterSpacer.appendChild(gutterViewport);
+        state.virtualScroll.gutterViewport = gutterViewport;
+        gutter.style.display = 'block';
+    } else {
+        gutter.style.display = 'none';
+    }
+
+    const scrollHandler = () => updateViewerViewport();
+    content.addEventListener('scroll', scrollHandler, { passive: true });
+    state.virtualScroll.scrollHandler = scrollHandler;
+
+    updateViewerViewport(true);
+
+    updateViewerStats(fileData, filteredLines.length);
+    content.style.fontSize = `${state.settings.fontSize}px`;
+    gutter.style.fontSize = `${state.settings.fontSize}px`;
+
+    if (state.liveTailActive && state.autoScrollEnabled) {
+        requestAnimationFrame(() => {
+            content.scrollTop = content.scrollHeight;
+        });
+    }
+}
+
+function updateViewerViewport(force) {
+    const vs = state.virtualScroll;
+    if (!vs || !vs.active) return;
+
+    const scrollTop = vs.contentEl.scrollTop;
+    const clientHeight = vs.contentEl.clientHeight || 800;
+
+    const visibleStart = Math.floor(scrollTop / vs.lineHeight);
+    const visibleEnd = Math.ceil((scrollTop + clientHeight) / vs.lineHeight);
+
+    if (!force && vs.lastRenderedStart >= 0) {
+        const safeTop = vs.lastRenderedStart + vs.overscan * 0.4;
+        const safeBot = vs.lastRenderedEnd - vs.overscan * 0.4;
+        if (visibleStart >= safeTop && visibleEnd <= safeBot) {
+            return;
+        }
+    }
+
+    const startIdx = Math.max(0, visibleStart - vs.overscan);
+    const endIdx = Math.min(vs.filteredLines.length, visibleEnd + vs.overscan);
+
+    vs.lastRenderedStart = startIdx;
+    vs.lastRenderedEnd = endIdx;
+
+    const lines = vs.filteredLines;
+    const fileData = vs.fileData;
+    const html = [];
+
+    for (let i = startIdx; i < endIdx; i++) {
+        const entry = lines[i];
+        const levelClass = entry.level !== 'default' ? entry.level : '';
+        let displayLine;
+
+        if (fileData.isConfig) {
+            let hl = escapeHtml(entry.raw);
+            if (entry.raw.trim().startsWith('[') && entry.raw.trim().endsWith(']')) {
+                hl = `<span style="color: var(--accent-primary); font-weight: 600;">${hl}</span>`;
+            } else if (entry.raw.trim().startsWith('#') || entry.raw.trim().startsWith(';')) {
+                hl = `<span style="color: var(--text-tertiary); font-style: italic;">${hl}</span>`;
+            } else if (entry.raw.includes('=')) {
+                const parts = entry.raw.split('=');
+                if (parts.length >= 2) {
+                    hl = `<span style="color: var(--accent-secondary);">${escapeHtml(parts[0])}</span>=<span style="color: var(--text-primary);">${escapeHtml(parts.slice(1).join('='))}</span>`;
+                }
+            }
+            displayLine = hl;
+        } else {
+            displayLine = state.settings.highlightSearch && vs.searchMatchIndices.has(i)
+                ? highlightSearchTerms(escapeHtml(entry.raw))
+                : escapeHtml(entry.raw);
+
+            if (state.highlightRules.length > 0) {
+                displayLine = applyHighlightRules(entry.raw, fileData.name);
+            }
+        }
+
+        const searchClass = vs.searchMatchIndices.has(i) ? ' search-match' : '';
+        const currentMatchClass = vs.currentSearchFilteredIndex === i ? ' current-match' : '';
+        const cssClass = fileData.isConfig ? 'config-line' : levelClass;
+
+        html.push(`<div class="log-line ${cssClass}${searchClass}${currentMatchClass}" data-line="${entry.lineNumber}" data-vindex="${i}">${displayLine || '&nbsp;'}</div>`);
+    }
+
+    vs.viewport.innerHTML = html.join('');
+    vs.viewport.style.transform = `translateY(${startIdx * vs.lineHeight}px)`;
+
+    if (vs.gutterViewport) {
+        const gutterHtml = [];
+        for (let i = startIdx; i < endIdx; i++) {
+            gutterHtml.push(`<div class="line-number" data-line="${lines[i].lineNumber}">${lines[i].lineNumber}</div>`);
+        }
+        vs.gutterViewport.innerHTML = gutterHtml.join('');
+        vs.gutterViewport.style.transform = `translateY(${startIdx * vs.lineHeight}px)`;
+    }
+}
+
+function renderLogDirect(fileData, filteredLines, gutter, content) {
     // Build gutter using DocumentFragment
     if (state.settings.showLineNumbers) {
         const gutterFragment = document.createDocumentFragment();
@@ -1690,6 +1879,7 @@ function updateViewerStats(fileData, displayedLines) {
     if (stats) {
         stats.textContent = `${fileData.name} | ${displayedLines.toLocaleString()} of ${fileData.lines.length.toLocaleString()} lines displayed`;
     }
+    updateViewerHighlightCounts();
 }
 
 // ============================================
@@ -1731,7 +1921,6 @@ function performSearch() {
         return;
     }
     
-    // Check if regex search
     let regex;
     if (query.startsWith('/') && query.endsWith('/')) {
         try {
@@ -1744,7 +1933,38 @@ function performSearch() {
         regex = new RegExp(escapeRegex(query), 'gi');
     }
     
-    // Find matches
+    if (state.virtualScroll && state.virtualScroll.active) {
+        const vs = state.virtualScroll;
+        vs.searchMatchIndices = new Set();
+        state.searchMatches = [];
+        
+        vs.filteredLines.forEach((entry, idx) => {
+            regex.lastIndex = 0;
+            if (regex.test(entry.raw)) {
+                vs.searchMatchIndices.add(idx);
+                state.searchMatches.push({
+                    filteredIndex: idx,
+                    lineNumber: entry.lineNumber
+                });
+            }
+        });
+        
+        if (state.searchMatches.length > 0) {
+            state.currentMatchIndex = 0;
+            vs.currentSearchFilteredIndex = state.searchMatches[0].filteredIndex;
+            updateSearchNavigation();
+            scrollToMatch(0);
+            searchNav.style.display = 'flex';
+        } else {
+            searchNav.style.display = 'none';
+            showToast('No matches found', 'info');
+        }
+        
+        vs.lastRenderedStart = -1;
+        updateViewerViewport();
+        return;
+    }
+    
     state.searchMatches = [];
     const logLines = document.querySelectorAll('.log-line');
     
@@ -1762,7 +1982,6 @@ function performSearch() {
         }
     });
     
-    // Update search navigation
     if (state.searchMatches.length > 0) {
         state.currentMatchIndex = 0;
         updateSearchNavigation();
@@ -1773,7 +1992,6 @@ function performSearch() {
         showToast('No matches found', 'info');
     }
     
-    // Re-highlight search terms
     if (state.currentFileIndex >= 0) {
         displayLog(state.files[state.currentFileIndex]);
     }
@@ -1800,13 +2018,31 @@ function updateSearchNavigation() {
         countEl.textContent = `${state.currentMatchIndex + 1}/${state.searchMatches.length}`;
     }
     
-    // Update current match highlight
+    if (state.virtualScroll && state.virtualScroll.active) {
+        return;
+    }
+    
     state.searchMatches.forEach((match, idx) => {
-        match.element.classList.toggle('current-match', idx === state.currentMatchIndex);
+        if (match.element) {
+            match.element.classList.toggle('current-match', idx === state.currentMatchIndex);
+        }
     });
 }
 
 function scrollToMatch(index) {
+    if (state.virtualScroll && state.virtualScroll.active) {
+        const match = state.searchMatches[index];
+        if (match) {
+            const vs = state.virtualScroll;
+            vs.currentSearchFilteredIndex = match.filteredIndex;
+            const scrollPos = match.filteredIndex * vs.lineHeight - vs.contentEl.clientHeight / 2;
+            vs.contentEl.scrollTop = Math.max(0, scrollPos);
+            vs.lastRenderedStart = -1;
+            updateViewerViewport();
+        }
+        return;
+    }
+    
     const match = state.searchMatches[index];
     if (match && match.element) {
         match.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1817,9 +2053,16 @@ function clearSearch() {
     state.searchMatches = [];
     state.currentMatchIndex = -1;
     
-    document.querySelectorAll('.log-line').forEach(line => {
-        line.classList.remove('search-match', 'current-match');
-    });
+    if (state.virtualScroll && state.virtualScroll.active) {
+        state.virtualScroll.searchMatchIndices = new Set();
+        state.virtualScroll.currentSearchFilteredIndex = -1;
+        state.virtualScroll.lastRenderedStart = -1;
+        updateViewerViewport();
+    } else {
+        document.querySelectorAll('.log-line').forEach(line => {
+            line.classList.remove('search-match', 'current-match');
+        });
+    }
     
     document.getElementById('searchNav').style.display = 'none';
     
@@ -1847,10 +2090,53 @@ function highlightSearchTerms(text) {
 
 function performCompareSearch() {
     const query = document.getElementById('compareSearchInput').value.trim();
+
+    if (state.compareVirtualScroll) {
+        let totalMatches = 0;
+
+        state.compareVirtualScroll.forEach((vs, idx) => {
+            if (!vs) return;
+            vs.searchMatchIndices = vs.searchMatchIndices || new Set();
+            vs.searchMatchIndices.clear();
+            vs.searchQuery = '';
+        });
+
+        if (!query) {
+            state.compareVirtualScroll.forEach((vs, idx) => {
+                if (!vs) return;
+                vs.lastRenderedStart = -1;
+                updateComparePanelViewport(idx);
+            });
+            updateCompareSearchCounts(0, 0);
+            return;
+        }
+
+        const regex = new RegExp(escapeRegex(query), 'gi');
+
+        state.compareVirtualScroll.forEach((vs, idx) => {
+            if (!vs) return;
+            vs.searchQuery = query;
+            vs.searchMatchIndices = new Set();
+
+            vs.file.lines.forEach((line, lineIdx) => {
+                regex.lastIndex = 0;
+                if (regex.test(line)) {
+                    vs.searchMatchIndices.add(lineIdx);
+                    totalMatches++;
+                }
+            });
+
+            vs.lastRenderedStart = -1;
+            updateComparePanelViewport(idx);
+        });
+
+        updateCompareSearchCounts(totalMatches, state.compareVirtualScroll.filter(Boolean).length);
+        return;
+    }
+
     const panels = document.querySelectorAll('.compare-panel-content');
     const isFilterMode = state.compareSearchFilterMode;
     
-    // Clear all highlights and restore hidden lines first
     panels.forEach(panel => {
         panel.querySelectorAll('.log-line.search-match').forEach(line => {
             line.classList.remove('search-match');
@@ -1858,36 +2144,31 @@ function performCompareSearch() {
         panel.querySelectorAll('.log-line.search-hidden').forEach(line => {
             line.classList.remove('search-hidden');
         });
-        // Remove any inline highlight spans from previous search
         panel.querySelectorAll('.compare-search-hl').forEach(hl => {
             hl.replaceWith(hl.textContent);
         });
     });
     
-    // Update match count badges
     updateCompareSearchCounts(0, 0);
     
-    // If query is empty, we're done — highlights are cleared
     if (!query) return;
     
     const regex = new RegExp(escapeRegex(query), 'gi');
     let totalMatches = 0;
     let totalLines = 0;
     
-    // Highlight matching lines and wrap matched text with visible markers
     panels.forEach(panel => {
         const lines = panel.querySelectorAll('.log-line');
         let panelMatches = 0;
         
         lines.forEach(line => {
             const isMatch = regex.test(line.textContent);
-            regex.lastIndex = 0; // Reset for next test
+            regex.lastIndex = 0;
             
             if (isMatch) {
                 line.classList.add('search-match');
                 panelMatches++;
                 
-                // Wrap the matched text inside the line for inline highlighting
                 const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT, null, false);
                 const textNodes = [];
                 while (walker.nextNode()) textNodes.push(walker.currentNode);
@@ -1918,7 +2199,6 @@ function performCompareSearch() {
                     node.parentNode.replaceChild(frag, node);
                 });
             } else if (isFilterMode) {
-                // In filter mode, hide non-matching lines
                 line.classList.add('search-hidden');
             }
         });
@@ -2149,6 +2429,7 @@ function updateCompareView() {
                     ${escapeHtml(shortLabel)}${fileTypeBadge}
                 </h4>
                 <div class="file-badge">${file.lines.length.toLocaleString()} lines &middot; ${formatFileSize(file.size)}</div>
+                ${generateComparePanelMatchPills(file)}
                 <div class="compare-panel-actions">
                     <button class="btn-icon panel-minimize-btn" onclick="toggleMinimizePanel(${index})" title="Minimize this panel">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2168,31 +2449,24 @@ function updateCompareView() {
                     </button>
                 </div>
             </div>
-            <div class="compare-panel-content" onscroll="handleCompareScroll(event, ${index})">
-                ${file.lines.map((line, lineIdx) => {
-                    const level = detectLogLevel(line);
-                    const levelClass = level !== 'default' ? level : '';
-                    const timestamp = extractTimestamp(line);
-                    const timestampAttr = timestamp ? `data-timestamp="${timestamp}"` : '';
-                    const clickHandler = state.timeSyncActive && timestamp ? `onclick="syncToTimestamp('${timestamp}', ${index}, ${lineIdx + 1})"` : '';
-                    const cursorStyle = state.timeSyncActive && timestamp ? 'cursor: pointer;' : '';
-                    
-                    // Apply custom highlight rules
-                    const displayLine = state.highlightRules.length > 0 
-                        ? applyHighlightRules(line, file.name)
-                        : escapeHtml(line);
-                    
-                    return `<div class="log-line ${levelClass}" data-line="${lineIdx + 1}" data-file-index="${index}" ${timestampAttr} ${clickHandler} style="${cursorStyle}">${displayLine || '&nbsp;'}</div>`;
-                }).join('')}
+            <div class="compare-panel-content virtual-scroll-mode" data-panel-index="${index}" onscroll="handleCompareScroll(event, ${index})">
+                <div class="virtual-scroll-spacer" style="height: ${file.lines.length * 20}px; position: relative;">
+                    <div class="virtual-scroll-viewport" style="position: absolute; left: 0; right: 0; will-change: transform;"></div>
+                </div>
             </div>
         </div>
     `;
     }).join('');
     
     container.innerHTML = panelsHtml;
-    
+
+    initCompareVirtualScroll(container);
+
     // Build/update the floating minimized dock (lives outside the container)
     updateMinimizedDock();
+    
+    // Update highlight results panel below compare tiles
+    updateCompareHighlightResults();
     
     // After full re-render, scroll to bottom if live tail is active
     if (state.liveTailActive && state.autoScrollEnabled) {
@@ -2202,10 +2476,173 @@ function updateCompareView() {
     }
 }
 
+function cleanupCompareVirtualScroll() {
+    state.compareVirtualScroll = null;
+}
+
+function initCompareVirtualScroll(container) {
+    cleanupCompareVirtualScroll();
+
+    const compareLineHeight = 20;
+    const OVERSCAN = 150;
+    state.compareVirtualScroll = state.files.map((file, index) => {
+        const panelContent = container.querySelector(`[data-panel-index="${index}"]`);
+        if (!panelContent) return null;
+
+        const viewport = panelContent.querySelector('.virtual-scroll-viewport');
+
+        const vsState = {
+            file: file,
+            panelContent: panelContent,
+            viewport: viewport,
+            lineHeight: compareLineHeight,
+            overscan: OVERSCAN,
+            lastRenderedStart: -1,
+            lastRenderedEnd: -1,
+            fileIndex: index,
+            searchMatchIndices: null,
+            searchQuery: ''
+        };
+
+        panelContent.addEventListener('scroll', () => updateComparePanelViewport(index), { passive: true });
+
+        updateComparePanelViewport(index, true);
+
+        return vsState;
+    });
+
+    requestAnimationFrame(() => {
+        if (!state.compareVirtualScroll) return;
+        state.compareVirtualScroll.forEach((vs, idx) => {
+            if (vs) {
+                vs.lastRenderedStart = -1;
+                vs.lastRenderedEnd = -1;
+                updateComparePanelViewport(idx, true);
+            }
+        });
+    });
+}
+
+function updateComparePanelViewport(index, force) {
+    const cvs = state.compareVirtualScroll;
+    if (!cvs || !cvs[index]) return;
+
+    const vs = cvs[index];
+    const scrollTop = vs.panelContent.scrollTop;
+    const clientHeight = vs.panelContent.clientHeight || 600;
+
+    const visibleStart = Math.floor(scrollTop / vs.lineHeight);
+    const visibleEnd = Math.ceil((scrollTop + clientHeight) / vs.lineHeight);
+
+    if (!force && vs.lastRenderedStart >= 0) {
+        const safeTop = vs.lastRenderedStart + vs.overscan * 0.4;
+        const safeBot = vs.lastRenderedEnd - vs.overscan * 0.4;
+        if (visibleStart >= safeTop && visibleEnd <= safeBot) {
+            return;
+        }
+    }
+
+    const startIdx = Math.max(0, visibleStart - vs.overscan);
+    const endIdx = Math.min(vs.file.lines.length, visibleEnd + vs.overscan);
+
+    vs.lastRenderedStart = startIdx;
+    vs.lastRenderedEnd = endIdx;
+
+    const html = [];
+    const fileIndex = vs.fileIndex;
+    const file = vs.file;
+    const timeSyncActive = state.timeSyncActive;
+    const tsTarget = state.timeSyncActive ? state.timeSyncLastTarget : null;
+
+    const hasSearchMatches = vs.searchMatchIndices && vs.searchMatchIndices.size > 0;
+    const searchQuery = vs.searchQuery || '';
+
+    for (let i = startIdx; i < endIdx; i++) {
+        const line = file.lines[i];
+        const level = detectLogLevel(line);
+        let levelClass = level !== 'default' ? level : '';
+        const timestamp = extractTimestamp(line);
+        const timestampAttr = timestamp ? ` data-timestamp="${timestamp}"` : '';
+        const clickHandler = timeSyncActive && timestamp ? ` onclick="syncToTimestamp('${timestamp}', ${fileIndex}, ${i + 1})"` : '';
+        const cursorStyle = timeSyncActive && timestamp ? ' cursor: pointer;' : '';
+        let searchClass = hasSearchMatches && vs.searchMatchIndices.has(i) ? ' search-match' : '';
+
+        // Determine Time Sync classes
+        let tsClass = '';
+        if (timeSyncActive && tsTarget) {
+            let isDimmed = false;
+            let isHighlight = false;
+            let isNearest = false;
+            let isSource = false;
+
+            const bounds = state.timeSyncBounds ? state.timeSyncBounds[fileIndex] : null;
+            if (bounds && bounds.start !== -1) {
+                if (i < bounds.start || i > bounds.end) {
+                    isDimmed = true;
+                }
+            } else if (bounds && bounds.start === -1) {
+                isDimmed = true;
+            }
+            
+            if (timestamp) {
+                const lineTime = parseTimestamp(timestamp);
+                if (lineTime) {
+                    if (fileIndex === tsTarget.sourceFileIndex && i + 1 === tsTarget.sourceLine) {
+                        isSource = true;
+                        isDimmed = false;
+                    } else if (lineTime >= tsTarget.minTime && lineTime <= tsTarget.maxTime) {
+                        isHighlight = true;
+                        isDimmed = false;
+                    } else if (state.timeSyncNearestLines && state.timeSyncNearestLines[fileIndex] === i) {
+                        isNearest = true;
+                        isDimmed = false;
+                    }
+                }
+            }
+
+            if (isDimmed) tsClass += ' time-sync-dimmed';
+            if (isSource) tsClass += ' time-sync-source';
+            if (isHighlight) tsClass += ' time-sync-highlight';
+            if (isNearest) tsClass += ' time-sync-nearest';
+        }
+
+        let displayLine = state.highlightRules.length > 0
+            ? applyHighlightRules(line, file.name)
+            : escapeHtml(line);
+
+        if (hasSearchMatches && vs.searchMatchIndices.has(i) && searchQuery) {
+            const searchRegex = new RegExp(escapeRegex(searchQuery), 'gi');
+            displayLine = displayLine.replace(searchRegex, m => `<mark class="compare-search-hl">${m}</mark>`);
+        }
+
+        html.push(`<div class="log-line ${levelClass}${searchClass}${tsClass}" data-line="${i + 1}" data-file-index="${fileIndex}"${timestampAttr}${clickHandler} style="${cursorStyle}">${displayLine || '&nbsp;'}</div>`);
+    }
+
+    vs.viewport.innerHTML = html.join('');
+    vs.viewport.style.transform = `translateY(${startIdx * vs.lineHeight}px)`;
+}
+
 function handleCompareScroll(event, sourceIndex) {
-    if (!state.syncScroll) return;
+    if (state.timeSyncScrolling) return; // Ignore programmatic scrolls during sync
     
     const sourcePanel = event.target;
+    
+    // If Time Sync is active and we have an anchor lock, sync scroll by EXACT PIXELS (slot machine mode)
+    if (state.timeSyncActive && state.timeSyncOffsets && state.timeSyncOffsets[sourceIndex] !== undefined) {
+        const currentScroll = sourcePanel.scrollTop;
+        const delta = currentScroll - state.timeSyncOffsets[sourceIndex];
+        
+        document.querySelectorAll('.compare-panel-content').forEach((panel, index) => {
+            if (index !== sourceIndex && state.timeSyncOffsets[index] !== undefined) {
+                panel.scrollTop = state.timeSyncOffsets[index] + delta;
+            }
+        });
+        return;
+    }
+    
+    // Otherwise, use proportional sync scroll if enabled
+    if (!state.syncScroll) return;
+    
     const scrollRatio = sourcePanel.scrollTop / (sourcePanel.scrollHeight - sourcePanel.clientHeight);
     
     document.querySelectorAll('.compare-panel-content').forEach((panel, index) => {
@@ -2976,6 +3413,27 @@ function appendNewContentLive(fileData, newContent, newLines) {
  * Efficiently append new lines to the log viewer (single file view)
  */
 function appendLinesToViewer(fileData, newLines, startLineIdx) {
+    if (state.virtualScroll && state.virtualScroll.active) {
+        const vs = state.virtualScroll;
+        const parsed = state.parsedLogs.get(fileData.name) || [];
+        const newParsed = newLines.map((line, idx) => ({
+            lineNumber: startLineIdx + idx + 1,
+            raw: line,
+            level: detectLogLevel(line),
+            timestamp: extractTimestamp(line),
+            message: line
+        }));
+        vs.filteredLines = vs.filteredLines.concat(newParsed);
+        vs.totalHeight = vs.filteredLines.length * vs.lineHeight;
+        const spacer = vs.contentEl.querySelector('.virtual-scroll-spacer');
+        if (spacer) spacer.style.height = vs.totalHeight + 'px';
+        const gutterSpacer = vs.gutterEl.querySelector('div');
+        if (gutterSpacer) gutterSpacer.style.height = vs.totalHeight + 'px';
+        vs.lastRenderedStart = -1;
+        updateViewerViewport();
+        return;
+    }
+
     const logContent = document.getElementById('logContent');
     if (!logContent) return;
     
@@ -2986,7 +3444,6 @@ function appendLinesToViewer(fileData, newLines, startLineIdx) {
         const level = detectLogLevel(line);
         const levelClass = level !== 'default' ? level : '';
         
-        // Apply custom highlight rules
         const displayLine = state.highlightRules.length > 0 
             ? applyHighlightRules(line, fileData.name)
             : escapeHtml(line);
@@ -2997,7 +3454,6 @@ function appendLinesToViewer(fileData, newLines, startLineIdx) {
         lineDiv.innerHTML = displayLine || '&nbsp;';
         logContent.appendChild(lineDiv);
         
-        // Add gutter line number
         if (logGutter) {
             const gutterLine = document.createElement('div');
             gutterLine.className = 'gutter-line';
@@ -3012,13 +3468,22 @@ function appendLinesToViewer(fileData, newLines, startLineIdx) {
  * This is the key function for real-time live tail in the Compare view.
  */
 function appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx) {
+    if (state.compareVirtualScroll && state.compareVirtualScroll[fileIndex]) {
+        const vs = state.compareVirtualScroll[fileIndex];
+        const newTotalHeight = fileData.lines.length * vs.lineHeight;
+        const spacer = vs.panelContent.querySelector('.virtual-scroll-spacer');
+        if (spacer) spacer.style.height = newTotalHeight + 'px';
+        vs.lastRenderedStart = -1;
+        updateComparePanelViewport(fileIndex);
+        return;
+    }
+
     const panel = document.querySelector(`.compare-panel[data-index="${fileIndex}"]`);
     if (!panel) return;
     
     const panelContent = panel.querySelector('.compare-panel-content');
     if (!panelContent) return;
     
-    // Create a document fragment for efficient batch DOM insertion
     const fragment = document.createDocumentFragment();
     
     newLines.forEach((line, idx) => {
@@ -3027,7 +3492,6 @@ function appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx) 
         const levelClass = level !== 'default' ? level : '';
         const timestamp = extractTimestamp(line);
         
-        // Apply custom highlight rules
         const displayLine = state.highlightRules.length > 0 
             ? applyHighlightRules(line, fileData.name)
             : escapeHtml(line);
@@ -3044,8 +3508,6 @@ function appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx) 
             lineDiv.onclick = () => syncToTimestamp(timestamp, fileIndex, lineNum);
         }
         lineDiv.innerHTML = displayLine || '&nbsp;';
-        
-        // Add a brief flash effect so the user can see new lines arriving
         lineDiv.classList.add('live-tail-new-line');
         
         fragment.appendChild(lineDiv);
@@ -3053,7 +3515,6 @@ function appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx) 
     
     panelContent.appendChild(fragment);
     
-    // Remove the flash animation class after it plays
     requestAnimationFrame(() => {
         setTimeout(() => {
             const flashLines = panelContent.querySelectorAll('.live-tail-new-line');
@@ -3665,12 +4126,32 @@ function jumpToLine() {
         return;
     }
     
+    if (state.virtualScroll && state.virtualScroll.active) {
+        const vs = state.virtualScroll;
+        const idx = vs.filteredLines.findIndex(e => e.lineNumber === lineNum);
+        if (idx >= 0) {
+            const scrollPos = idx * vs.lineHeight - vs.contentEl.clientHeight / 2;
+            vs.contentEl.scrollTop = Math.max(0, scrollPos);
+            vs.lastRenderedStart = -1;
+            updateViewerViewport();
+            requestAnimationFrame(() => {
+                const lineEl = vs.viewport.querySelector(`[data-line="${lineNum}"]`);
+                if (lineEl) {
+                    lineEl.classList.add('highlight');
+                    setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+                }
+            });
+        } else {
+            showToast(`Line ${lineNum} not found in current view`, 'warning');
+        }
+        return;
+    }
+    
     const lineEl = document.querySelector(`.log-line[data-line="${lineNum}"]`);
     if (lineEl) {
         lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         lineEl.classList.add('highlight');
         
-        // Highlight gutter
         const gutterEl = document.querySelector(`.line-number[data-line="${lineNum}"]`);
         if (gutterEl) gutterEl.classList.add('active');
         
@@ -4467,8 +4948,10 @@ function closeHighlightRulesModal() {
             
             if (hasCompare) {
                 updateCompareView();
+                updateCompareHighlightResults();
             }
             
+            updateViewerHighlightCounts();
             hideGlobalLoader();
         }, 50);
     }
@@ -4812,6 +5295,286 @@ function applyHighlightRules(lineText, fileName) {
     });
     
     return html;
+}
+
+function countHighlightMatchesForFile(lines, fileName, collectLines) {
+    if (!state.highlightRules.length) return [];
+
+    return state.highlightRules.reduce((results, rule) => {
+        if (!rule.enabled) return results;
+
+        if (fileName && rule.targetFiles && rule.targetFiles !== 'all') {
+            if (!rule.targetFiles.includes(fileName)) return results;
+        }
+
+        try {
+            const flags = rule.caseSensitive ? '' : 'i';
+            const regex = new RegExp(escapeRegex(rule.pattern), flags);
+            let count = 0;
+            const matchedLines = collectLines ? [] : null;
+
+            for (let i = 0; i < lines.length; i++) {
+                const text = typeof lines[i] === 'string' ? lines[i] : lines[i].raw;
+                if (regex.test(text)) {
+                    count++;
+                    if (collectLines) {
+                        const lineNum = typeof lines[i] === 'string' ? (i + 1) : (lines[i].lineNumber || (i + 1));
+                        matchedLines.push({ lineNumber: lineNum, text: text });
+                    }
+                }
+            }
+
+            results.push({
+                pattern: rule.pattern,
+                textColor: rule.textColor,
+                backgroundColor: rule.backgroundColor,
+                count: count,
+                matchedLines: matchedLines
+            });
+        } catch (e) {
+            // skip invalid pattern
+        }
+
+        return results;
+    }, []);
+}
+
+function generateMatchPillsHtml(matches) {
+    if (!matches || !matches.length) return '';
+
+    return matches
+        .filter(m => m.count > 0)
+        .map(m =>
+            `<span class="hl-match-pill" style="color: ${m.textColor}; background-color: ${m.backgroundColor};" title="${escapeHtml(m.pattern)}: ${m.count.toLocaleString()} line${m.count !== 1 ? 's' : ''} matched">${escapeHtml(m.pattern)} <span class="hl-pill-count">${m.count.toLocaleString()}</span></span>`
+        ).join('');
+}
+
+// ============================================
+// Highlight Results Panel (Notepad++ style)
+// ============================================
+
+function truncateMatchText(text, maxLen) {
+    if (text.length <= maxLen) return text;
+    return text.substring(0, maxLen) + '\u2026';
+}
+
+function buildRuleGroupHtml(match, navTarget, startCollapsed) {
+    if (match.count === 0) return '';
+
+    const escapedPattern = escapeHtml(match.pattern);
+    const collapsedClass = startCollapsed ? ' collapsed' : '';
+    const chevronRotation = startCollapsed ? '' : ' rotated';
+
+    let linesHtml = '';
+    if (match.matchedLines) {
+        linesHtml = match.matchedLines.map(ml => {
+            const truncated = escapeHtml(truncateMatchText(ml.text, 300));
+            return `<div class="hlr-match-line" ondblclick="navigateToHighlightLine(${ml.lineNumber}, ${navTarget})" title="Double-click to go to line ${ml.lineNumber}">
+                <span class="hlr-line-num">${ml.lineNumber}</span>
+                <span class="hlr-line-text">${truncated}</span>
+            </div>`;
+        }).join('');
+    }
+
+    return `<div class="hlr-rule-group${collapsedClass}">
+        <div class="hlr-rule-header" onclick="toggleHlrGroup(this)">
+            <svg class="hlr-chevron${chevronRotation}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            <span class="hlr-rule-swatch" style="background-color: ${match.backgroundColor}; border-color: ${match.textColor};"></span>
+            <span class="hlr-rule-pattern">${escapedPattern}</span>
+            <span class="hlr-rule-count">${match.count.toLocaleString()} match${match.count !== 1 ? 'es' : ''}</span>
+        </div>
+        <div class="hlr-rule-matches">${linesHtml}</div>
+    </div>`;
+}
+
+function updateViewerHighlightResults() {
+    const panel = document.getElementById('viewerHighlightResults');
+    if (!panel) return;
+
+    if (!state.highlightRules.length || state.currentFileIndex < 0) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const file = state.files[state.currentFileIndex];
+    if (!file) { panel.style.display = 'none'; return; }
+
+    const parsed = state.parsedLogs.get(file.name) || file.lines;
+    const matches = countHighlightMatchesForFile(parsed, file.name, true);
+    const activeMatches = matches.filter(m => m.count > 0);
+
+    if (!activeMatches.length) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const totalMatches = activeMatches.reduce((s, m) => s + m.count, 0);
+    const rulesText = activeMatches.length === 1 ? '1 rule' : `${activeMatches.length} rules`;
+
+    const groupsHtml = activeMatches.map(m =>
+        buildRuleGroupHtml(m, `'viewer'`, true)
+    ).join('');
+
+    panel.style.display = '';
+    const isCollapsed = panel.classList.contains('panel-collapsed');
+    panel.innerHTML = `
+        <div class="hlr-header" onclick="toggleHlrPanel(this.parentElement)">
+            <div class="hlr-title">
+                <svg class="hlr-panel-chevron${isCollapsed ? '' : ' rotated'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                <svg class="hlr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                </svg>
+                <span>Highlight Results</span>
+                <span class="hlr-summary">${rulesText} &middot; ${totalMatches.toLocaleString()} matches</span>
+            </div>
+        </div>
+        <div class="hlr-body">${groupsHtml}</div>
+    `;
+}
+
+function updateCompareHighlightResults() {
+    const panel = document.getElementById('compareHighlightResults');
+    if (!panel) return;
+
+    if (!state.highlightRules.length || !state.files.length) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const fileResults = [];
+    let grandTotal = 0;
+
+    state.files.forEach((file, fileIndex) => {
+        const matches = countHighlightMatchesForFile(file.lines, file.name, true);
+        const activeMatches = matches.filter(m => m.count > 0);
+        const fileTotal = activeMatches.reduce((s, m) => s + m.count, 0);
+
+        if (activeMatches.length > 0) {
+            fileResults.push({
+                fileName: file.name,
+                fileIndex: fileIndex,
+                matches: activeMatches,
+                total: fileTotal
+            });
+            grandTotal += fileTotal;
+        }
+    });
+
+    if (!fileResults.length) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const filesText = fileResults.length === 1 ? '1 file' : `${fileResults.length} files`;
+    const rulesCount = new Set(fileResults.flatMap(fr => fr.matches.map(m => m.pattern))).size;
+    const rulesText = rulesCount === 1 ? '1 rule' : `${rulesCount} rules`;
+
+    let bodyHtml = '';
+    fileResults.forEach(fr => {
+        const shortName = escapeHtml(fr.fileName.length > 50 ? '\u2026' + fr.fileName.slice(-47) : fr.fileName);
+        const groupsHtml = fr.matches.map(m =>
+            buildRuleGroupHtml(m, fr.fileIndex, true)
+        ).join('');
+
+        bodyHtml += `<div class="hlr-file-group">
+            <div class="hlr-file-header" onclick="toggleHlrGroup(this)">
+                <svg class="hlr-chevron rotated" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                <svg class="hlr-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span class="hlr-file-name">${shortName}</span>
+                <span class="hlr-file-count">${fr.total.toLocaleString()} match${fr.total !== 1 ? 'es' : ''}</span>
+            </div>
+            <div class="hlr-file-matches">${groupsHtml}</div>
+        </div>`;
+    });
+
+    panel.style.display = '';
+    const isCollapsed = panel.classList.contains('panel-collapsed');
+    panel.innerHTML = `
+        <div class="hlr-header" onclick="toggleHlrPanel(this.parentElement)">
+            <div class="hlr-title">
+                <svg class="hlr-panel-chevron${isCollapsed ? '' : ' rotated'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                <svg class="hlr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                </svg>
+                <span>Highlight Results</span>
+                <span class="hlr-summary">${filesText} &middot; ${rulesText} &middot; ${grandTotal.toLocaleString()} matches</span>
+            </div>
+        </div>
+        <div class="hlr-body">${bodyHtml}</div>
+    `;
+}
+
+function toggleHlrPanel(panelEl) {
+    panelEl.classList.toggle('panel-collapsed');
+    const chevron = panelEl.querySelector('.hlr-panel-chevron');
+    if (chevron) chevron.classList.toggle('rotated');
+}
+
+function toggleHlrGroup(headerEl) {
+    const group = headerEl.parentElement;
+    group.classList.toggle('collapsed');
+    const chevron = headerEl.querySelector('.hlr-chevron');
+    if (chevron) chevron.classList.toggle('rotated');
+    event.stopPropagation();
+}
+
+function navigateToHighlightLine(lineNumber, target) {
+    if (target === 'viewer') {
+        // Navigate in the main log viewer
+        if (state.virtualScroll && state.virtualScroll.active) {
+            const vs = state.virtualScroll;
+            const idx = vs.filteredLines.findIndex(e => e.lineNumber === lineNumber);
+            if (idx >= 0) {
+                const scrollPos = idx * vs.lineHeight - vs.contentEl.clientHeight / 2;
+                vs.contentEl.scrollTop = Math.max(0, scrollPos);
+                vs.lastRenderedStart = -1;
+                updateViewerViewport();
+                requestAnimationFrame(() => {
+                    const lineEl = vs.viewport.querySelector(`[data-line="${lineNumber}"]`);
+                    if (lineEl) {
+                        lineEl.classList.add('highlight');
+                        setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+                    }
+                });
+            } else {
+                showToast(`Line ${lineNumber} not found in current view`, 'warning');
+            }
+        } else {
+            const lineEl = document.querySelector(`.log-line[data-line="${lineNumber}"]`);
+            if (lineEl) {
+                lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                lineEl.classList.add('highlight');
+                setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+            }
+        }
+    } else if (typeof target === 'number') {
+        // Navigate in a compare panel by file index
+        const cvs = state.compareVirtualScroll;
+        if (!cvs || !cvs[target]) return;
+        const vs = cvs[target];
+        const scrollPos = (lineNumber - 1) * vs.lineHeight - vs.panelContent.clientHeight / 2;
+        vs.panelContent.scrollTop = Math.max(0, scrollPos);
+        vs.lastRenderedStart = -1;
+        updateComparePanelViewport(target, true);
+        requestAnimationFrame(() => {
+            const lineEl = vs.viewport.querySelector(`[data-line="${lineNumber}"]`);
+            if (lineEl) {
+                lineEl.classList.add('highlight');
+                setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+            }
+        });
+    }
+}
+
+function updateViewerHighlightCounts() {
+    updateViewerHighlightResults();
+}
+
+function generateComparePanelMatchPills(file) {
+    return '';
 }
 
 function escapeRegex(str) {
@@ -6167,9 +6930,9 @@ function toggleTimeSync() {
                 }, 200);
             }
             
-            // Clear highlights and remove handlers
             clearTimeSyncHighlights();
             disableTimeSyncHandlers();
+            state.timeSyncLastTarget = null;
             
             state.timeSyncProcessing = false;
             btn.disabled = false;
@@ -6239,11 +7002,25 @@ function updateTimeSyncThreshold(value) {
     state.timeSyncRange = parseInt(value) * 1000; // Convert to milliseconds
     const display = document.getElementById('thresholdDisplay');
     if (display) {
-        display.textContent = `±${value} second${value > 1 ? 's' : ''}`;
+        const val = parseInt(value);
+        if (val >= 60) {
+            const mins = val / 60;
+            display.textContent = `±${mins} minute${mins !== 1 ? 's' : ''}`;
+        } else {
+            display.textContent = `±${val} second${val !== 1 ? 's' : ''}`;
+        }
     }
     
-    // Update preset button states
     updatePresetButtons(parseInt(value));
+    
+    // Live re-sync: re-apply highlights with the new threshold if a sync target exists
+    if (state.timeSyncActive && state.timeSyncLastTarget) {
+        clearTimeout(state.timeSyncThresholdTimer);
+        state.timeSyncThresholdTimer = setTimeout(() => {
+            const t = state.timeSyncLastTarget;
+            performTimeSyncInternal(t.timestampStr, t.targetTime, t.sourceFileIndex, t.sourceLine);
+        }, 80);
+    }
 }
 
 function setTimeSyncThreshold(seconds) {
@@ -6256,7 +7033,12 @@ function setTimeSyncThreshold(seconds) {
 
 function updatePresetButtons(value) {
     document.querySelectorAll('.btn-preset').forEach(btn => {
-        const btnValue = parseInt(btn.textContent);
+        let btnValue;
+        if (btn.textContent.includes('m')) {
+            btnValue = parseInt(btn.textContent) * 60;
+        } else {
+            btnValue = parseInt(btn.textContent);
+        }
         btn.classList.toggle('active', btnValue === value);
     });
 }
@@ -6299,12 +7081,20 @@ function syncToTimestamp(timestampStr, sourceFileIndex, sourceLine) {
 function performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sourceLine) {
     console.log('Time Sync - Target timestamp:', timestampStr, '| Parsed to:', new Date(targetTime).toISOString(), '| Ms:', targetTime);
     
-    // Clear previous highlights
-    clearTimeSyncHighlights();
-    
     const rangeMs = state.timeSyncRange;
     const minTime = targetTime - rangeMs;
     const maxTime = targetTime + rangeMs;
+    
+    state.timeSyncLastTarget = { timestampStr, targetTime, minTime, maxTime, sourceFileIndex, sourceLine };
+    state.timeSyncNearestLines = {}; // Initialize object to store nearest lines
+    state.timeSyncBounds = {}; // Initialize object to store first/last match indices
+    state.timeSyncOffsets = {}; // Store precise pixel offsets for slot-machine scrolling
+    
+    // Clear status display manually instead of calling clearTimeSyncHighlights() which would wipe our state
+    const statusClearEl = document.getElementById('timeSyncStatus');
+    if (statusClearEl) {
+        statusClearEl.innerHTML = '';
+    }
     
     console.log(`Time Sync - Range: ±${rangeMs}ms (${rangeMs/1000}s) | Min: ${new Date(minTime).toISOString()} | Max: ${new Date(maxTime).toISOString()}`);
     
@@ -6312,99 +7102,113 @@ function performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sour
     let otherFilesWithMatches = 0;
     const totalOtherFiles = state.files.length - 1;
     
-    // First, highlight and scroll the SOURCE panel to the clicked line
-    const sourcePanel = document.querySelector(`.compare-panel[data-index="${sourceFileIndex}"]`);
-    if (sourcePanel) {
-        const sourceLines = sourcePanel.querySelectorAll('.log-line[data-timestamp]');
-        let sourceClickedLine = null;
-        
-        // Find and highlight the exact clicked line in the source panel
-        sourceLines.forEach(line => {
-            const lineNum = parseInt(line.getAttribute('data-line'));
-            if (lineNum === sourceLine) {
-                line.classList.add('time-sync-source');
-                sourceClickedLine = line;
-            }
-            // Also highlight nearby lines in source within the time range
-            const lineTimestamp = line.getAttribute('data-timestamp');
-            if (lineTimestamp) {
-                const lineTime = parseTimestamp(lineTimestamp);
-                if (lineTime && lineTime >= minTime && lineTime <= maxTime) {
-                    line.classList.add('time-sync-highlight');
-                }
-            }
-        });
-        
-        // Scroll source panel to center the clicked line
-        if (sourceClickedLine) {
-            const panelContent = sourcePanel.querySelector('.compare-panel-content');
-            if (panelContent) {
-                const lineTop = sourceClickedLine.offsetTop;
-                const panelHeight = panelContent.clientHeight;
-                const scrollPos = lineTop - (panelHeight / 2);
-                panelContent.scrollTop = Math.max(0, scrollPos);
-            }
-        }
-    }
+    // Suppress sync-scroll while we programmatically position all panels
+    state.timeSyncScrolling = true;
     
-    // Now find and line up matches in all OTHER panels
-    document.querySelectorAll('.compare-panel').forEach((panel, panelIndex) => {
-        // Skip the source panel - we only care about OTHER files
-        if (panelIndex === sourceFileIndex) return;
-        
-        const lines = panel.querySelectorAll('.log-line[data-timestamp]');
-        let closestMatch = null;
+    state.files.forEach((file, fileIndex) => {
+        const isSource = (fileIndex === sourceFileIndex);
+        let closestLineIdx = -1;
         let closestDelta = Infinity;
         let fileHighlightCount = 0;
+        let firstMatchIdx = -1;
+        let lastMatchIdx = -1;
         
-        console.log(`Time Sync - File ${panelIndex}: ${lines.length} timestamped lines to check`);
-        
-        lines.forEach(line => {
-            const lineTimestamp = line.getAttribute('data-timestamp');
-            if (lineTimestamp) {
-                const lineTime = parseTimestamp(lineTimestamp);
-                if (lineTime) {
-                    if (lineTime >= minTime && lineTime <= maxTime) {
-                        line.classList.add('time-sync-highlight');
-                        fileHighlightCount++;
-                        totalHighlightedOtherFiles++;
-                        
-                        // Track the closest match to the target time for best alignment
-                        const delta = Math.abs(lineTime - targetTime);
-                        if (delta < closestDelta) {
-                            closestDelta = delta;
-                            closestMatch = line;
-                        }
-                    }
+        // Scan ALL lines in the file to find timestamps
+        for (let i = 0; i < file.lines.length; i++) {
+            const line = file.lines[i];
+            const tsStr = extractTimestamp(line);
+            if (!tsStr) continue;
+            
+            const lineTime = parseTimestamp(tsStr);
+            if (!lineTime) continue;
+            
+            // Highlight checking
+            if (lineTime >= minTime && lineTime <= maxTime) {
+                if (firstMatchIdx === -1) firstMatchIdx = i;
+                lastMatchIdx = i;
+                
+                if (!isSource) {
+                    fileHighlightCount++;
+                    totalHighlightedOtherFiles++;
                 }
             }
-        });
+            
+            // Track closest
+            const delta = Math.abs(lineTime - targetTime);
+            if (delta < closestDelta) {
+                closestDelta = delta;
+                closestLineIdx = i;
+            }
+        }
         
-        if (fileHighlightCount > 0) {
+        state.timeSyncBounds[fileIndex] = { start: firstMatchIdx, end: lastMatchIdx };
+        
+        if (!isSource && fileHighlightCount > 0) {
             otherFilesWithMatches++;
         }
         
-        console.log(`Time Sync - File ${panelIndex}: ${fileHighlightCount} matches found in OTHER file`);
+        const targetLineIdx = isSource ? (sourceLine - 1) : closestLineIdx;
         
-        // Scroll OTHER panel to the closest matching line, centering it
-        // This visually lines up all panels at the same timeframe
-        if (closestMatch) {
-            const panelContent = panel.querySelector('.compare-panel-content');
-            if (panelContent) {
-                const lineTop = closestMatch.offsetTop;
-                const panelHeight = panelContent.clientHeight;
-                const scrollPos = lineTop - (panelHeight / 2);
-                panelContent.scrollTop = Math.max(0, scrollPos);
+        if (targetLineIdx >= 0) {
+            // If it's not the source file, and this closest line isn't within the threshold range, mark it as nearest
+            if (!isSource) {
+                const tsStr = extractTimestamp(file.lines[targetLineIdx]);
+                if (tsStr) {
+                    const lineTime = parseTimestamp(tsStr);
+                    if (lineTime && (lineTime < minTime || lineTime > maxTime)) {
+                        state.timeSyncNearestLines[fileIndex] = targetLineIdx;
+                    }
+                }
+            }
+            
+            // Scroll virtual viewport to this line index
+            const cvs = state.compareVirtualScroll;
+            if (cvs && cvs[fileIndex]) {
+                const vs = cvs[fileIndex];
+                // Try to center the target line perfectly in the middle of the panel
+                const scrollPos = (targetLineIdx + 0.5) * vs.lineHeight - vs.panelContent.clientHeight / 2;
+                const finalScrollTop = Math.max(0, scrollPos);
+                vs.panelContent.scrollTop = finalScrollTop;
+                
+                // Store the precise pixel offset to lock scrolling in slot-machine mode
+                state.timeSyncOffsets[fileIndex] = finalScrollTop;
+                
+                // Force a synchronous re-render of this panel's virtual scroll to apply the new highlights immediately
+                vs.lastRenderedStart = -1;
+                updateComparePanelViewport(fileIndex, true);
+            }
+        } else {
+            // Even if no target found, store the offset to keep it locked where it is
+            const cvs = state.compareVirtualScroll;
+            if (cvs && cvs[fileIndex]) {
+                state.timeSyncOffsets[fileIndex] = cvs[fileIndex].panelContent.scrollTop;
             }
         }
+        
+        // Always force a re-render so classes (like dimmed) apply correctly
+        const fallbackCvs = state.compareVirtualScroll;
+        if (fallbackCvs && fallbackCvs[fileIndex] && targetLineIdx < 0) {
+            const vs = fallbackCvs[fileIndex];
+            vs.lastRenderedStart = -1;
+            updateComparePanelViewport(fileIndex, true);
+        }
+        
+        console.log(`Time Sync - File ${fileIndex} (${isSource ? 'SOURCE' : 'OTHER'}): ${fileHighlightCount} matches in range, closest delta: ${Math.round(closestDelta)}ms`);
     });
+    
+    // Re-enable sync-scroll after a short delay so smooth-scroll events don't cascade
+    setTimeout(() => { state.timeSyncScrolling = false; }, 100);
     
     console.log(`Time Sync - Total matches in OTHER files: ${totalHighlightedOtherFiles} across ${totalOtherFiles} other files`);
     
-    // Update status display - report matches in OTHER files only
+    // Update status display
     const statusEl = document.getElementById('timeSyncStatus');
     if (statusEl) {
-        const thresholdSeconds = state.timeSyncRange / 1000;
+        let thresholdLabel = `${state.timeSyncRange / 1000}s`;
+        if (state.timeSyncRange >= 60000) {
+            thresholdLabel = `${state.timeSyncRange / 60000}m`;
+        }
+        
         const fileMatchSummary = otherFilesWithMatches === totalOtherFiles
             ? `all ${totalOtherFiles} other file${totalOtherFiles !== 1 ? 's' : ''}`
             : `${otherFilesWithMatches} of ${totalOtherFiles} other file${totalOtherFiles !== 1 ? 's' : ''}`;
@@ -6414,27 +7218,39 @@ function performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sour
                 <strong>Synced to:</strong> ${escapeHtml(timestampStr)}<br>
                 <span style="color: var(--text-tertiary); font-size: 0.875rem;">
                     ${totalHighlightedOtherFiles > 0 
-                        ? `${totalHighlightedOtherFiles} matching line${totalHighlightedOtherFiles !== 1 ? 's' : ''} found in ${fileMatchSummary} within ±${thresholdSeconds}s — panels lined up`
-                        : `No matching timestamps found in other files within ±${thresholdSeconds}s`}
+                        ? `${totalHighlightedOtherFiles} matching line${totalHighlightedOtherFiles !== 1 ? 's' : ''} found in ${fileMatchSummary} within ±${thresholdLabel} — all panels lined up`
+                        : `No exact matches within ±${thresholdLabel} — panels scrolled to nearest timestamps`}
                 </span>
             </div>
         `;
     }
     
     if (totalHighlightedOtherFiles > 0) {
-        showToast(`Time sync: ${totalHighlightedOtherFiles} match${totalHighlightedOtherFiles !== 1 ? 'es' : ''} in ${otherFilesWithMatches} other file${otherFilesWithMatches !== 1 ? 's' : ''} — lined up`, 'success');
+        showToast(`Time sync: ${totalHighlightedOtherFiles} match${totalHighlightedOtherFiles !== 1 ? 'es' : ''} in ${otherFilesWithMatches} other file${otherFilesWithMatches !== 1 ? 's' : ''}`, 'success');
     } else {
-        showToast(`No matching timestamps in other files within ±${state.timeSyncRange / 1000}s`, 'warning');
+        let thresholdLabel = `${state.timeSyncRange / 1000}s`;
+        if (state.timeSyncRange >= 60000) {
+            thresholdLabel = `${state.timeSyncRange / 60000}m`;
+        }
+        showToast(`No matches within ±${thresholdLabel} — panels scrolled to nearest timestamps`, 'info');
     }
 }
 
 function clearTimeSyncHighlights() {
-    document.querySelectorAll('.time-sync-highlight').forEach(line => {
-        line.classList.remove('time-sync-highlight');
-    });
-    document.querySelectorAll('.time-sync-source').forEach(line => {
-        line.classList.remove('time-sync-source');
-    });
+    state.timeSyncLastTarget = null;
+    state.timeSyncNearestLines = {};
+    state.timeSyncBounds = {};
+    state.timeSyncOffsets = {};
+    
+    // Force re-render of all virtual scroll viewports to clear highlights
+    if (state.compareVirtualScroll) {
+        state.compareVirtualScroll.forEach((vs, idx) => {
+            if (vs) {
+                vs.lastRenderedStart = -1;
+                updateComparePanelViewport(idx, true);
+            }
+        });
+    }
     
     const statusEl = document.getElementById('timeSyncStatus');
     if (statusEl) {
@@ -6445,33 +7261,39 @@ function clearTimeSyncHighlights() {
 function parseTimestamp(timestampStr) {
     // Try various timestamp formats and convert to milliseconds since epoch
     
+    // Helper to parse fractional seconds correctly
+    const parseMs = (msStr) => {
+        if (!msStr) return 0;
+        return parseFloat("0." + msStr) * 1000;
+    };
+    
     // Format: 2024-01-19 14:25:30.123 or 2024-01-19T14:25:30.123
-    let match = timestampStr.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+    let match = timestampStr.match(/(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?/);
     if (match) {
         const [, year, month, day, hour, min, sec, ms] = match;
-        return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+        return new Date(year, month - 1, day, hour, min, sec).getTime() + parseMs(ms);
     }
     
     // Format: 19/01/2024 14:25:30.123
-    match = timestampStr.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+    match = timestampStr.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?/);
     if (match) {
         const [, day, month, year, hour, min, sec, ms] = match;
-        return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+        return new Date(year, month - 1, day, hour, min, sec).getTime() + parseMs(ms);
     }
     
     // Format: 01-19-2024 14:25:30.123
-    match = timestampStr.match(/(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+    match = timestampStr.match(/(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?/);
     if (match) {
         const [, month, day, year, hour, min, sec, ms] = match;
-        return new Date(year, month - 1, day, hour, min, sec, ms || 0).getTime();
+        return new Date(year, month - 1, day, hour, min, sec).getTime() + parseMs(ms);
     }
     
     // Format: [14:25:30.123] or 14:25:30.123 (time only - use today's date)
-    match = timestampStr.match(/\[?(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?\]?/);
+    match = timestampStr.match(/\[?(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?\]?/);
     if (match) {
         const today = new Date();
         const [, hour, min, sec, ms] = match;
-        return new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour, min, sec, ms || 0).getTime();
+        return new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour, min, sec).getTime() + parseMs(ms);
     }
     
     // If no pattern matched, try standard Date parsing as fallback
