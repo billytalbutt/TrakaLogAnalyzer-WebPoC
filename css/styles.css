@@ -3294,11 +3294,6 @@ mark.compare-search-hl {
     animation: pulse 2s ease-in-out infinite;
 }
 
-#autoScrollBtn.active {
-    background: var(--accent-secondary);
-    border-color: var(--accent-secondary);
-}
-
 @keyframes pulse {
     0%, 100% {
         box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);

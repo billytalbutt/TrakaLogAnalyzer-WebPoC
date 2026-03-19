@@ -3667,23 +3667,6 @@ function scrollComparePanelsToBottom() {
 }
 
 /**
- * Toggle auto-scroll feature
- */
-function toggleAutoScroll() {
-    state.autoScrollEnabled = !state.autoScrollEnabled;
-    updateAutoScrollButton();
-    
-    if (state.autoScrollEnabled) {
-        showToast('Auto-scroll enabled - will scroll to new lines', 'success');
-        if (state.liveTailActive) {
-            scrollToBottom();
-        }
-    } else {
-        showToast('Auto-scroll disabled', 'info');
-    }
-}
-
-/**
  * Update live tail button appearance
  */
 function updateLiveTailButton() {
@@ -3729,22 +3712,6 @@ function updateLiveTailButton() {
             panel.classList.remove('live-tail-active');
         }
     });
-}
-
-/**
- * Update auto-scroll button appearance
- */
-function updateAutoScrollButton() {
-    const btn = document.getElementById('autoScrollBtn');
-    if (btn) {
-        if (state.autoScrollEnabled) {
-            btn.classList.add('active');
-            btn.title = 'Auto-scroll enabled';
-        } else {
-            btn.classList.remove('active');
-            btn.title = 'Auto-scroll disabled';
-        }
-    }
 }
 
 // ============================================
