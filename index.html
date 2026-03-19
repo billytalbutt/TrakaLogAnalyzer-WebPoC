@@ -365,26 +365,27 @@
                                 <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                             </svg>
                             <input type="text" id="searchInput" placeholder="Search logs... (supports regex with /pattern/)">
-                        <div class="search-nav" id="searchNav" style="display: none;">
-                            <span id="searchCount">0/0</span>
-                            <button class="btn-icon" onclick="navigateSearch(-1)" title="Previous match">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="18 15 12 9 6 15"></polyline>
-                                </svg>
-                            </button>
-                            <button class="btn-icon" onclick="navigateSearch(1)" title="Next match">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
-                            </button>
+                            <div class="search-nav" id="searchNav" style="display: none;">
+                                <span id="searchCount">0/0</span>
+                                <button class="btn-icon" onclick="navigateSearch(-1)" title="Previous match">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="18 15 12 9 6 15"></polyline>
+                                    </svg>
+                                </button>
+                                <button class="btn-icon" onclick="navigateSearch(1)" title="Next match">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
+                        
+                        <button class="btn-icon search-filter-toggle-btn" onclick="toggleViewerSearchFilters()" title="Toggle filters visibility">
+                            <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="18 15 12 9 6 15"></polyline>
+                            </svg>
+                        </button>
                     </div>
-                    
-                    <button class="btn-icon search-filter-toggle-btn" onclick="toggleViewerSearchFilters()" title="Toggle filters visibility">
-                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="18 15 12 9 6 15"></polyline>
-                        </svg>
-                    </button>
                     
                     <div class="search-filter-collapsible" id="viewerSearchFilters">
                         <div class="filter-chips">
