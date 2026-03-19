@@ -427,6 +427,7 @@ function sortFilesForCompare(files) {
         'Comms Engine': 2,
         'TrakaWEB': 3,
         'Integration Engine Service': 4,
+        'Integration Engine': 4.5,
         'Integration Monitor': 5,
         'SiPass Integration': 6,
         'OnGuard Integration': 7,
@@ -863,6 +864,26 @@ function initializeApp() {
     }
 }
 
+// ============================================
+// UI Toggle Functions
+// ============================================
+function toggleViewerSearchFilters() {
+    const filtersContainer = document.getElementById('viewerSearchFilters');
+    const toggleBtn = document.querySelector('.search-filter-toggle-btn');
+    
+    if (filtersContainer && toggleBtn) {
+        filtersContainer.classList.toggle('collapsed');
+        toggleBtn.classList.toggle('collapsed');
+        
+        // Save preference
+        try {
+            localStorage.setItem('traka-viewer-filters-collapsed', filtersContainer.classList.contains('collapsed').toString());
+        } catch (e) {
+            console.error('Failed to save viewer filters state:', e);
+        }
+    }
+}
+
 // Check if DOM is already loaded, otherwise wait for DOMContentLoaded
 if (document.readyState === 'loading') {
     console.log('📋 DOM still loading, waiting for DOMContentLoaded...');
@@ -887,6 +908,20 @@ function initNavigation() {
     
     // Restore sidebar collapsed state
     restoreSidebarState();
+    
+    // Restore collapsible filters state
+    try {
+        if (localStorage.getItem('traka-viewer-filters-collapsed') === 'true') {
+            const filtersContainer = document.getElementById('viewerSearchFilters');
+            const toggleBtn = document.querySelector('.search-filter-toggle-btn');
+            if (filtersContainer && toggleBtn) {
+                filtersContainer.classList.add('collapsed');
+                toggleBtn.classList.add('collapsed');
+            }
+        }
+    } catch (e) {
+        // Ignore
+    }
 }
 
 // ============================================
@@ -1148,11 +1183,22 @@ function detectEngineType(filename) {
     
     if (lower.includes('business')) return 'Business Engine';
     if (lower.includes('comms')) return 'Comms Engine';
+    if (lower.includes('trakaweb') || lower.includes('mvcapp')) return 'TrakaWEB';
+    
+    // Integrations
+    if (lower.includes('ccure')) return 'CCure Integration';
+    if (lower.includes('lenel')) return 'Lenel Integration';
+    if (lower.includes('onguard')) return 'OnGuard Integration';
+    if (lower.includes('symmetry')) return 'Symmetry Integration';
+    if (lower.includes('sipass')) return 'SiPass Integration';
+    if (lower.includes('postbox')) return 'PostBox Integration';
+    if (lower.includes('activedirectory') || lower.includes('active_directory')) return 'Active Directory Integration';
+    
+    // Generic integration engine components
+    if (lower.includes('integration') && lower.includes('monitor')) return 'Integration Monitor';
+    if (lower.includes('integration') && lower.includes('service')) return 'Integration Engine Service';
     if (lower.includes('integration')) return 'Integration Engine';
-    if (lower.includes('ccure')) return 'CCure Plugin';
-    if (lower.includes('lenel')) return 'Lenel Plugin';
-    if (lower.includes('onguard')) return 'OnGuard Plugin';
-    if (lower.includes('symmetry')) return 'Symmetry Plugin';
+    
     if (lower.includes('secure')) return 'Secure Plugin';
     if (lower.endsWith('.cfg')) return 'Config';
     
@@ -1295,8 +1341,20 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
             content: content,
             lines: content.split('\n'),
             fileHandle: file, // Store original File object for live monitoring
-            isConfig: isConfig // Flag to identify config files
+            isConfig: isConfig, // Flag to identify config files
+            engineType: null
         };
+        
+        // Detect engine type
+        const lowerName = file.name.toLowerCase();
+        if (lowerName === 'debugging_log.txt' || lowerName === 'debugging_log.log') {
+            fileData.engineType = detectEngineTypeFromContent(fileData);
+        } else {
+            const detected = detectEngineType(file.name);
+            if (detected !== 'Log File') {
+                fileData.engineType = detected;
+            }
+        }
         
         // Check if file already loaded
         const existingIndex = state.files.findIndex(f => f.name === file.name);
@@ -1304,6 +1362,19 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
             state.files[existingIndex] = fileData;
         } else {
             state.files.push(fileData);
+        }
+        
+        // Save current viewer file to maintain selection after sorting
+        const currentViewerFile = state.currentFileIndex >= 0 && state.files[state.currentFileIndex] 
+            ? state.files[state.currentFileIndex].name 
+            : null;
+            
+        // Always sort files so they appear in correct priority order automatically
+        state.files = sortFilesForCompare(state.files);
+        
+        // Restore currentFileIndex to point to the correct file after sort
+        if (currentViewerFile) {
+            state.currentFileIndex = state.files.findIndex(f => f.name === currentViewerFile);
         }
         
         // Initialize last read position for live tail
@@ -1327,7 +1398,7 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
         }
         
         // Auto-select first file only if we're not skipping navigation
-        if (!skipNavigation && state.currentFileIndex === -1) {
+        if (!skipNavigation && state.files.length === 1) {
             state.currentFileIndex = 0;
             displayLog(state.files[0]);
         }
@@ -1705,7 +1776,11 @@ function updateViewerViewport(force) {
         const currentMatchClass = vs.currentSearchFilteredIndex === i ? ' current-match' : '';
         const cssClass = fileData.isConfig ? 'config-line' : levelClass;
 
-        html.push(`<div class="log-line ${cssClass}${searchClass}${currentMatchClass}" data-line="${entry.lineNumber}" data-vindex="${i}">${displayLine || '&nbsp;'}</div>`);
+        if (entry.isSeparator) {
+            html.push(`<div class="log-line stitched-separator" data-line="-1" data-vindex="${i}">${displayLine}</div>`);
+        } else {
+            html.push(`<div class="log-line ${cssClass}${searchClass}${currentMatchClass}" data-line="${entry.lineNumber}" data-vindex="${i}">${displayLine || '&nbsp;'}</div>`);
+        }
     }
 
     vs.viewport.innerHTML = html.join('');
@@ -1714,7 +1789,11 @@ function updateViewerViewport(force) {
     if (vs.gutterViewport) {
         const gutterHtml = [];
         for (let i = startIdx; i < endIdx; i++) {
-            gutterHtml.push(`<div class="line-number" data-line="${lines[i].lineNumber}">${lines[i].lineNumber}</div>`);
+            if (lines[i].isSeparator) {
+                gutterHtml.push(`<div class="line-number" data-line="-1">-</div>`);
+            } else {
+                gutterHtml.push(`<div class="line-number" data-line="${lines[i].lineNumber}">${lines[i].lineNumber}</div>`);
+            }
         }
         vs.gutterViewport.innerHTML = gutterHtml.join('');
         vs.gutterViewport.style.transform = `translateY(${startIdx * vs.lineHeight}px)`;
@@ -1727,7 +1806,7 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
         const gutterFragment = document.createDocumentFragment();
         const gutterDiv = document.createElement('div');
         gutterDiv.innerHTML = filteredLines.map(entry => 
-            `<div class="line-number" data-line="${entry.lineNumber}">${entry.lineNumber}</div>`
+            entry.isSeparator ? `<div class="line-number" data-line="-1">-</div>` : `<div class="line-number" data-line="${entry.lineNumber}">${entry.lineNumber}</div>`
         ).join('');
         
         while (gutterDiv.firstChild) {
@@ -1776,6 +1855,11 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
             // Apply custom highlight rules
             if (state.highlightRules.length > 0) {
                 highlightedLine = applyHighlightRules(entry.raw, fileData.name);
+            }
+            
+            // Apply stitched log separator logic
+            if (entry.isSeparator) {
+                return `<div class="log-line stitched-separator" data-line="-1">${highlightedLine}</div>`;
             }
             
             return `<div class="log-line ${levelClass}" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
@@ -2587,14 +2671,17 @@ function updateComparePanelViewport(index, force) {
             if (timestamp) {
                 const lineTime = parseTimestamp(timestamp);
                 if (lineTime) {
+                    // Check if this line is the exact match/target for this file
+                    const isTargetMatch = (!isSource && state.timeSyncNearestLines && state.timeSyncNearestLines[fileIndex] === i);
+                    
                     if (fileIndex === tsTarget.sourceFileIndex && i + 1 === tsTarget.sourceLine) {
                         isSource = true;
                         isDimmed = false;
+                    } else if (isTargetMatch) {
+                        isNearest = true;
+                        isDimmed = false;
                     } else if (lineTime >= tsTarget.minTime && lineTime <= tsTarget.maxTime) {
                         isHighlight = true;
-                        isDimmed = false;
-                    } else if (state.timeSyncNearestLines && state.timeSyncNearestLines[fileIndex] === i) {
-                        isNearest = true;
                         isDimmed = false;
                     }
                 }
@@ -4403,33 +4490,51 @@ async function performStitchAsync() {
     await new Promise(resolve => setTimeout(resolve, 50));
     
     // Sort by timestamp - entries without timestamps go to the end
-    const sortedEntries = allEntries.sort((a, b) => {
+    allEntries.sort((a, b) => {
         if (!a.sortableTimestamp && !b.sortableTimestamp) return 0;
         if (!a.sortableTimestamp) return 1;
         if (!b.sortableTimestamp) return -1;
         return a.sortableTimestamp - b.sortableTimestamp;
     });
     
+    // Inject separator lines where the source file changes
+    const finalEntries = [];
+    let lastSourceFile = null;
+    
+    for (let i = 0; i < allEntries.length; i++) {
+        const entry = allEntries[i];
+        if (lastSourceFile !== null && entry.sourceFile !== lastSourceFile) {
+            finalEntries.push({
+                isSeparator: true,
+                raw: `--- STITCH BREAK: Switching from ${lastSourceFile} to ${entry.sourceFile} ---`,
+                lineNumber: -1, // Special marker
+                sourceFile: 'SEPARATOR'
+            });
+        }
+        finalEntries.push(entry);
+        lastSourceFile = entry.sourceFile;
+    }
+    
     // Create a virtual "stitched" file
     const now = new Date();
     const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const timeStr = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
     const stitchedFileName = `Stitched_${state.stitchedFiles.length}files_${dateStr}_${timeStr}.log`;
-    const stitchedContent = sortedEntries.map(entry => entry.raw).join('\n');
+    const stitchedContent = finalEntries.map(entry => entry.raw).join('\n');
     
     state.stitchedData = {
         name: stitchedFileName,
         size: stitchedContent.length,
         lastModified: new Date(),
         content: stitchedContent,
-        lines: sortedEntries.map(e => e.raw),
+        lines: finalEntries.map(e => e.raw),
         isStitched: true,
         sourceFiles: state.stitchedFiles.slice(), // Copy array
-        entries: sortedEntries
+        entries: finalEntries
     };
     
     // Parse the stitched data
-    state.parsedLogs.set(stitchedFileName, sortedEntries);
+    state.parsedLogs.set(stitchedFileName, finalEntries);
     
     // Update progress for issue detection
     updateStitchingProgress(100, 100, 'Detecting issues...');
@@ -4465,7 +4570,7 @@ async function performStitchAsync() {
     
     const successMsg = entriesWithoutTimestamps > 0 
         ? `✓ Stitched ${state.stitchedFiles.length} files (${entriesWithTimestamps.toLocaleString()} sorted by timestamp, ${entriesWithoutTimestamps.toLocaleString()} without timestamps at end)`
-        : `✓ Successfully stitched ${state.stitchedFiles.length} files with ${sortedEntries.length.toLocaleString()} log entries`;
+        : `✓ Successfully stitched ${state.stitchedFiles.length} files with ${finalEntries.length.toLocaleString()} log entries`;
     
     showToast(successMsg, 'success');
 }
@@ -7150,15 +7255,9 @@ function performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sour
         const targetLineIdx = isSource ? (sourceLine - 1) : closestLineIdx;
         
         if (targetLineIdx >= 0) {
-            // If it's not the source file, and this closest line isn't within the threshold range, mark it as nearest
+            // Unconditionally mark the closest match for all other files as the nearest/target
             if (!isSource) {
-                const tsStr = extractTimestamp(file.lines[targetLineIdx]);
-                if (tsStr) {
-                    const lineTime = parseTimestamp(tsStr);
-                    if (lineTime && (lineTime < minTime || lineTime > maxTime)) {
-                        state.timeSyncNearestLines[fileIndex] = targetLineIdx;
-                    }
-                }
+                state.timeSyncNearestLines[fileIndex] = targetLineIdx;
             }
             
             // Scroll virtual viewport to this line index

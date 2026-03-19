@@ -601,49 +601,48 @@ const solutionDatabase = {
             title: 'Integration Engine Missing Business Engine Credentials',
             category: 'Configuration',
             estimatedTime: '10 minutes',
-            why: 'The Integration Engine needs credentials to communicate with the Business Engine, but they haven\'t been configured.',
+            why: 'The Integration Engine needs credentials to communicate with the Business Engine. The credentials need to be reset via TrakaWeb Admin.',
             steps: [
                 {
                     number: 1,
-                    title: 'Open Traka Admin',
-                    description: 'Launch the Traka Admin desktop application.',
+                    title: 'Login to TrakaWeb Admin',
+                    description: 'Open TrakaWeb Admin in your browser and log in with an administrator account.',
                     command: null
                 },
                 {
                     number: 2,
-                    title: 'Navigate to Integration Engine',
-                    description: 'Go to Engines → Integration Engine configuration.',
+                    title: 'Locate Business Engine Record',
+                    description: 'Navigate to the Business Engine record and expand it to view the associated engines.',
                     command: null
                 },
                 {
                     number: 3,
-                    title: 'Enter Credentials',
-                    description: 'Input the Business Engine API username and password.',
+                    title: 'Select Integration Engine',
+                    description: 'Select the Integration Engine entry from the expanded Business Engine record.',
                     command: null
                 },
                 {
                     number: 4,
-                    title: 'Save Configuration',
-                    description: 'Click Save to persist the credentials.',
+                    title: 'Reset Credentials',
+                    description: 'Press the Reset button to reset the Business Engine API credentials for the Integration Engine.',
                     command: null
                 },
                 {
                     number: 5,
-                    title: 'Restart Integration Engine',
-                    description: 'Restart the "Traka Integration Engine Service".',
-                    command: 'services.msc'
+                    title: 'Save the Record',
+                    description: 'Click Save to persist the credential reset.',
+                    command: null
                 },
                 {
                     number: 6,
-                    title: 'Verify Connection',
-                    description: 'Check the Integration Engine log to confirm successful connection to Business Engine.',
+                    title: 'Verify Credential Reset',
+                    description: 'Check the Business Engine log to confirm the credential reset was successful and the Integration Engine can now connect.',
                     command: null
                 }
             ],
             prerequisites: [
-                'Business Engine API credentials',
-                'Access to Traka Admin',
-                'Service restart permissions'
+                'TrakaWeb Admin access with administrator privileges',
+                'Access to Business Engine logs'
             ],
             relatedIssues: ['IE_CANNOT_CONNECT_BE']
         },
@@ -676,8 +675,8 @@ const solutionDatabase = {
                 },
                 {
                     number: 4,
-                    title: 'Check Credentials',
-                    description: 'Verify the Integration Engine has the correct username and password for Business Engine.',
+                    title: 'Reset Credentials',
+                    description: 'In TrakaWeb Admin, locate the Business Engine record, expand it, select the Integration Engine, press Reset, and save. Check the Business Engine log to confirm the reset.',
                     command: null
                 },
                 {
@@ -1391,7 +1390,7 @@ const solutionDatabase = {
                 {
                     number: 2,
                     title: 'Locate Service',
-                    description: 'Find the Traka service mentioned in the error (Business Engine, Comms Engine, Integration Engine, or Monitor).',
+                    description: 'Find the Traka service mentioned in the error (Business Engine, Comms Engine, or Integration Engine).',
                     command: null
                 },
                 {

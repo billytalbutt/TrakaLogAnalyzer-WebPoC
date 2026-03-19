@@ -298,6 +298,11 @@
                             </svg>
                             Stitch Files
                         </button>
+                        <button class="btn btn-secondary" id="viewerFullscreenToggleTop" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            </svg>
+                        </button>
                         <input type="file" id="viewerFileInput" accept=".log,.txt,.cfg" multiple hidden>
                     </div>
                 </div>
@@ -353,12 +358,13 @@
                 </div>
                 
                 <div class="search-filter-bar">
-                    <div class="search-box large">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="11" cy="11" r="8"></circle>
-                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                        </svg>
-                        <input type="text" id="searchInput" placeholder="Search logs... (supports regex with /pattern/)">
+                    <div class="search-filter-top">
+                        <div class="search-box large">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input type="text" id="searchInput" placeholder="Search logs... (supports regex with /pattern/)">
                         <div class="search-nav" id="searchNav" style="display: none;">
                             <span id="searchCount">0/0</span>
                             <button class="btn-icon" onclick="navigateSearch(-1)" title="Previous match">
@@ -374,42 +380,48 @@
                         </div>
                     </div>
                     
-                    <div class="filter-chips">
-                        <button class="filter-chip active" data-level="all">All</button>
-                        <button class="filter-chip" data-level="error">
-                            <span class="chip-dot error"></span>Error
-                        </button>
-                        <button class="filter-chip" data-level="warning">
-                            <span class="chip-dot warning"></span>Warning
-                        </button>
-                        <button class="filter-chip" data-level="info">
-                            <span class="chip-dot info"></span>Info
-                        </button>
-                        <button class="filter-chip" data-level="debug">
-                            <span class="chip-dot debug"></span>Debug
-                        </button>
-                    </div>
+                    <button class="btn-icon search-filter-toggle-btn" onclick="toggleViewerSearchFilters()" title="Toggle filters visibility">
+                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="18 15 12 9 6 15"></polyline>
+                        </svg>
+                    </button>
                     
-                    <!-- Engine Filters -->
-                    <div class="engine-filters">
-                        <span class="engine-filter-label">Engines:</span>
-                        <button class="engine-filter-chip" data-engine="business" onclick="toggleEngineFilter('business')">
-                            🏢 Business
-                        </button>
-                        <button class="engine-filter-chip" data-engine="comms" onclick="toggleEngineFilter('comms')">
-                            📡 Comms
-                        </button>
-                        <button class="engine-filter-chip" data-engine="integration" onclick="toggleEngineFilter('integration')">
-                            🔌 Integration
-                        </button>
-                    </div>
-                    
-                    <div class="date-filter">
-                        <label>Time Range:</label>
-                        <input type="datetime-local" id="dateFrom" class="date-input">
-                        <span>to</span>
-                        <input type="datetime-local" id="dateTo" class="date-input">
-                        <button class="btn btn-small btn-secondary" onclick="clearDateFilter()">Clear</button>
+                    <div class="search-filter-collapsible" id="viewerSearchFilters">
+                        <div class="filter-chips">
+                            <button class="filter-chip active" data-level="all">All</button>
+                            <button class="filter-chip" data-level="error">
+                                <span class="chip-dot error"></span>Error
+                            </button>
+                            <button class="filter-chip" data-level="warning">
+                                <span class="chip-dot warning"></span>Warning
+                            </button>
+                            <button class="filter-chip" data-level="info">
+                                <span class="chip-dot info"></span>Info
+                            </button>
+                            <button class="filter-chip" data-level="debug">
+                                <span class="chip-dot debug"></span>Debug
+                            </button>
+                        </div>
+                        
+                        <!-- Engine Filters -->
+                        <div class="engine-filters">
+                            <button class="engine-filter-chip" data-engine="business" onclick="toggleEngineFilter('business')">
+                                🏢 Business
+                            </button>
+                            <button class="engine-filter-chip" data-engine="comms" onclick="toggleEngineFilter('comms')">
+                                📡 Comms
+                            </button>
+                            <button class="engine-filter-chip" data-engine="integration" onclick="toggleEngineFilter('integration')">
+                                🔌 Integration
+                            </button>
+                        </div>
+                        
+                        <div class="date-filter">
+                            <input type="datetime-local" id="dateFrom" class="date-input" title="Start Time">
+                            <span>to</span>
+                            <input type="datetime-local" id="dateTo" class="date-input" title="End Time">
+                            <button class="btn btn-small btn-secondary" onclick="clearDateFilter()">Clear</button>
+                        </div>
                     </div>
                 </div>
                 
@@ -446,7 +458,7 @@
                             </select>
                         </div>
                         
-                        <button class="btn-icon" id="fullscreenToggle" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
+                        <button class="btn-icon" id="viewerFullscreenToggleBottom" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
                             </svg>
@@ -619,12 +631,12 @@
                                     <span>Selected line (source)</span>
                                 </div>
                                 <div class="time-sync-legend-item">
-                                    <span class="legend-swatch legend-match"></span>
-                                    <span>Matches within threshold</span>
+                                    <span class="legend-swatch legend-nearest"></span>
+                                    <span>Closest match (target)</span>
                                 </div>
                                 <div class="time-sync-legend-item">
-                                    <span class="legend-swatch legend-nearest"></span>
-                                    <span>Nearest entry (outside threshold)</span>
+                                    <span class="legend-swatch legend-match"></span>
+                                    <span>Other lines within threshold</span>
                                 </div>
                             </div>
                         </div>
