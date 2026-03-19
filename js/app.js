@@ -1579,6 +1579,11 @@ function shouldDetectIssue(pattern) {
 function displayLog(fileData) {
     const gutter = document.getElementById('logGutter');
     const content = document.getElementById('logContent');
+    const toggleContainer = document.getElementById('stitchBreakToggleContainer');
+    
+    if (toggleContainer) {
+        toggleContainer.style.display = 'none';
+    }
     
     if (!fileData) {
         content.innerHTML = `
@@ -4444,6 +4449,8 @@ async function performStitchAsync() {
         processedFiles++;
         updateStitchingProgress(processedFiles, totalFiles, `Processing ${fileName}...`);
         
+        let lastSortableTime = null;
+        
         // Process entries in chunks
         const chunkSize = 500;
         for (let i = 0; i < parsed.length; i += chunkSize) {
@@ -4451,31 +4458,30 @@ async function performStitchAsync() {
             
             chunk.forEach(entry => {
                 totalLines++;
+                let sortableTime = null;
+                
                 if (entry.timestamp) {
-                    const sortableTime = parseTimestampForStitch(entry.timestamp);
-                    if (sortableTime !== null) {
-                        allEntries.push({
-                            ...entry,
-                            sourceFile: fileName,
-                            sortableTimestamp: sortableTime
-                        });
-                        entriesWithTimestamps++;
-                    } else {
-                        allEntries.push({
-                            ...entry,
-                            sourceFile: fileName,
-                            sortableTimestamp: null
-                        });
-                        entriesWithoutTimestamps++;
-                    }
+                    sortableTime = parseTimestampForStitch(entry.timestamp);
+                }
+                
+                if (sortableTime !== null) {
+                    lastSortableTime = sortableTime;
+                    entriesWithTimestamps++;
+                } else if (lastSortableTime !== null) {
+                    // Inherit timestamp from previous line in the same file
+                    // This keeps stack traces and multiline messages together with their parent!
+                    sortableTime = lastSortableTime;
+                    entriesWithTimestamps++;
                 } else {
-                    allEntries.push({
-                        ...entry,
-                        sourceFile: fileName,
-                        sortableTimestamp: null
-                    });
                     entriesWithoutTimestamps++;
                 }
+                
+                allEntries.push({
+                    ...entry,
+                    sourceFile: fileName,
+                    sortableTimestamp: sortableTime,
+                    originalIndex: entry.lineNumber
+                });
             });
             
             // Yield to browser every chunk
@@ -4491,10 +4497,29 @@ async function performStitchAsync() {
     
     // Sort by timestamp - entries without timestamps go to the end
     allEntries.sort((a, b) => {
-        if (!a.sortableTimestamp && !b.sortableTimestamp) return 0;
-        if (!a.sortableTimestamp) return 1;
-        if (!b.sortableTimestamp) return -1;
-        return a.sortableTimestamp - b.sortableTimestamp;
+        // If neither has a timestamp, keep original relative order if they are from the same file
+        if (a.sortableTimestamp === null && b.sortableTimestamp === null) {
+            if (a.sourceFile === b.sourceFile) {
+                return a.originalIndex - b.originalIndex;
+            }
+            return a.sourceFile.localeCompare(b.sourceFile);
+        }
+        
+        if (a.sortableTimestamp === null) return 1;
+        if (b.sortableTimestamp === null) return -1;
+        
+        // If timestamps are different, sort by timestamp
+        if (a.sortableTimestamp !== b.sortableTimestamp) {
+            return a.sortableTimestamp - b.sortableTimestamp;
+        }
+        
+        // If timestamps are exactly the same, try to keep lines from the same file in their original order
+        if (a.sourceFile === b.sourceFile) {
+            return a.originalIndex - b.originalIndex;
+        }
+        
+        // If different files have exact same timestamp, group by filename
+        return a.sourceFile.localeCompare(b.sourceFile);
     });
     
     // Inject separator lines where the source file changes
@@ -4699,6 +4724,22 @@ function updateStitchingProgress(current, total, status) {
     }
 }
 
+function toggleStitchBreaksVisibility() {
+    const toggle = document.getElementById('toggleStitchBreaks');
+    const content = document.getElementById('logContent');
+    const gutter = document.getElementById('logGutter');
+    
+    if (toggle && content && gutter) {
+        if (toggle.checked) {
+            content.classList.remove('hide-stitch-breaks');
+            gutter.classList.remove('hide-stitch-breaks');
+        } else {
+            content.classList.add('hide-stitch-breaks');
+            gutter.classList.add('hide-stitch-breaks');
+        }
+    }
+}
+
 function parseTimestampForStitch(timestampStr) {
     // Reuse the existing parseTimestamp function if available, otherwise implement
     if (typeof parseTimestamp === 'function') {
@@ -4743,6 +4784,11 @@ function parseTimestampForStitch(timestampStr) {
 function displayStitchedLog(fileData) {
     const gutter = document.getElementById('logGutter');
     const content = document.getElementById('logContent');
+    const toggleContainer = document.getElementById('stitchBreakToggleContainer');
+    
+    if (toggleContainer) {
+        toggleContainer.style.display = 'flex';
+    }
     
     let filtered = filterLines(fileData.entries);
     

@@ -449,6 +449,12 @@
                         <span id="viewerStats">No file loaded</span>
                     </div>
                     <div class="footer-controls">
+                        <!-- Stitch Break Visibility Control -->
+                        <div class="stitch-visibility-control" id="stitchBreakToggleContainer" style="display: none; align-items: center; gap: 0.5rem; margin-right: 1rem;">
+                            <input type="checkbox" id="toggleStitchBreaks" checked onchange="toggleStitchBreaksVisibility()">
+                            <label for="toggleStitchBreaks" style="font-size: 0.8125rem; color: var(--text-secondary); cursor: pointer;">Show File Breaks</label>
+                        </div>
+                        
                         <!-- Date Sort Control -->
                         <div class="date-sort-control">
                             <label>Sort by date:</label>
