@@ -6697,10 +6697,15 @@ function createTimelineChart() {
             datasets: [{
                 label: 'Issues',
                 data: data,
-                borderColor: 'rgba(255, 107, 53, 1)',
-                backgroundColor: 'rgba(255, 107, 53, 0.1)',
+                borderColor: 'rgba(59, 130, 246, 1)', // Blue
+                backgroundColor: 'rgba(59, 130, 246, 0.15)', // Light Blue transparent
+                borderWidth: 2,
                 tension: 0.4,
-                fill: true
+                fill: true,
+                pointBackgroundColor: 'rgba(59, 130, 246, 1)',
+                pointBorderColor: '#fff',
+                pointHoverBackgroundColor: '#fff',
+                pointHoverBorderColor: 'rgba(59, 130, 246, 1)'
             }]
         },
         options: {
@@ -6752,6 +6757,20 @@ function createTopIssuesChart() {
     
     if (charts.topIssues) charts.topIssues.destroy();
     
+    // Generate a pleasant color palette instead of just solid orange
+    const colors = [
+        'rgba(59, 130, 246, 0.8)',   // Blue
+        'rgba(16, 185, 129, 0.8)',   // Emerald
+        'rgba(139, 92, 246, 0.8)',   // Violet
+        'rgba(245, 158, 11, 0.8)',   // Amber
+        'rgba(236, 72, 153, 0.8)',   // Pink
+        'rgba(6, 182, 212, 0.8)',    // Cyan
+        'rgba(249, 115, 22, 0.8)',   // Orange
+        'rgba(99, 102, 241, 0.8)',   // Indigo
+        'rgba(20, 184, 166, 0.8)',   // Teal
+        'rgba(239, 68, 68, 0.8)'     // Red
+    ];
+    
     charts.topIssues = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -6759,8 +6778,9 @@ function createTopIssuesChart() {
             datasets: [{
                 label: 'Occurrences',
                 data: data,
-                backgroundColor: 'rgba(255, 107, 53, 0.8)',
-                borderWidth: 0
+                backgroundColor: colors.slice(0, labels.length),
+                borderWidth: 0,
+                borderRadius: 4
             }]
         },
         options: {
