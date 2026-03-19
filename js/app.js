@@ -1777,7 +1777,10 @@ function updateViewerViewport(force) {
         const cssClass = fileData.isConfig ? 'config-line' : levelClass;
 
         if (entry.isSeparator) {
-            html.push(`<div class="log-line stitched-separator" data-line="-1" data-vindex="${i}">${displayLine}</div>`);
+            html.push(`<div class="log-line stitched-separator" data-line="-1" data-vindex="${i}">
+                <div class="stitch-divider"></div>
+                <span class="stitch-badge">${displayLine}</span>
+            </div>`);
         } else {
             html.push(`<div class="log-line ${cssClass}${searchClass}${currentMatchClass}" data-line="${entry.lineNumber}" data-vindex="${i}">${displayLine || '&nbsp;'}</div>`);
         }
@@ -1859,7 +1862,10 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
             
             // Apply stitched log separator logic
             if (entry.isSeparator) {
-                return `<div class="log-line stitched-separator" data-line="-1">${highlightedLine}</div>`;
+                return `<div class="log-line stitched-separator" data-line="-1">
+                    <div class="stitch-divider"></div>
+                    <span class="stitch-badge">${highlightedLine}</span>
+                </div>`;
             }
             
             return `<div class="log-line ${levelClass}" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
@@ -4551,12 +4557,13 @@ async function performStitchAsync() {
     // Also detect issues in stitched log
     detectIssues(state.stitchedData);
     
+    // Select and display stitched file BEFORE updating dropdown
+    state.currentFileIndex = state.files.findIndex(f => f.name === stitchedFileName);
+    
     // Update UI
     updateUI();
     updateFileDropdown();
     
-    // Select and display stitched file
-    state.currentFileIndex = state.files.findIndex(f => f.name === stitchedFileName);
     displayStitchedLog(state.stitchedData);
     
     // Enable export button
@@ -4777,9 +4784,12 @@ function renderStitchedLogOptimized(fileData, filtered, gutter, content) {
         const gutterDiv = document.createElement('div');
         
         // Batch render gutter lines
-        const gutterHTML = filtered.map((entry, idx) => 
-            `<div class="line-number" data-line="${idx + 1}">${idx + 1}</div>`
-        ).join('');
+        const gutterHTML = filtered.map((entry, idx) => {
+            if (entry.isSeparator) {
+                return `<div class="line-number" data-line="-1">-</div>`;
+            }
+            return `<div class="line-number" data-line="${idx + 1}">${idx + 1}</div>`;
+        }).join('');
         
         gutterDiv.innerHTML = gutterHTML;
         while (gutterDiv.firstChild) {
@@ -4815,8 +4825,15 @@ function renderStitchedLogOptimized(fileData, filtered, gutter, content) {
     } else {
         // Render all at once for smaller files
         const contentHTML = filtered.map((entry, idx) => {
+            if (entry.isSeparator) {
+                return `<div class="log-line stitched-separator" data-line="-1">
+                    <div class="stitch-divider"></div>
+                    <span class="stitch-badge">${escapeHtml(entry.raw)}</span>
+                </div>`;
+            }
+            
             const levelClass = entry.level !== 'default' ? entry.level : '';
-            const highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
+            const highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
                 ? highlightSearchTerms(escapeHtml(entry.raw))
                 : escapeHtml(entry.raw);
             
@@ -4847,8 +4864,17 @@ function renderInBatches(filtered, contentDiv, fileData, startIdx, batchSize, ca
     const batchHTML = [];
     for (let i = startIdx; i < endIdx; i++) {
         const entry = filtered[i];
+        
+        if (entry.isSeparator) {
+            batchHTML.push(`<div class="log-line stitched-separator" data-line="-1">
+                <div class="stitch-divider"></div>
+                <span class="stitch-badge">${escapeHtml(entry.raw)}</span>
+            </div>`);
+            continue;
+        }
+        
         const levelClass = entry.level !== 'default' ? entry.level : '';
-        const highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
+        const highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
             ? highlightSearchTerms(escapeHtml(entry.raw))
             : escapeHtml(entry.raw);
         
