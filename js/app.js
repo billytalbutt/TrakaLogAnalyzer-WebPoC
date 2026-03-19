@@ -6647,9 +6647,9 @@ function createSeverityChart() {
             datasets: [{
                 data: [critical, errors, warnings],
                 backgroundColor: [
-                    'rgba(220, 38, 38, 0.8)',
-                    'rgba(239, 68, 68, 0.8)',
-                    'rgba(245, 158, 11, 0.8)'
+                    'rgba(153, 27, 27, 0.85)',   // Dark Red for Critical
+                    'rgba(239, 68, 68, 0.85)',   // Bright Red for Error
+                    'rgba(234, 179, 8, 0.85)'    // Yellow/Amber for Warning
                 ],
                 borderWidth: 0
             }]
@@ -6837,19 +6837,19 @@ function createFileComparisonChart() {
                 {
                     label: 'Critical',
                     data: critical,
-                    backgroundColor: 'rgba(220, 38, 38, 0.8)',
+                    backgroundColor: 'rgba(153, 27, 27, 0.85)',
                     borderWidth: 0
                 },
                 {
                     label: 'Error',
                     data: errors,
-                    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.85)',
                     borderWidth: 0
                 },
                 {
                     label: 'Warning',
                     data: warnings,
-                    backgroundColor: 'rgba(245, 158, 11, 0.8)',
+                    backgroundColor: 'rgba(234, 179, 8, 0.85)',
                     borderWidth: 0
                 }
             ]
