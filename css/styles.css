@@ -3282,9 +3282,13 @@ mark.compare-search-hl {
 }
 
 .btn.active {
+    background: var(--bg-hover);
+    border-color: var(--accent-primary);
+}
+
+.btn-primary.active {
     background: var(--accent-primary);
     color: white;
-    border-color: var(--accent-primary);
 }
 
 #liveTailBtn.active,

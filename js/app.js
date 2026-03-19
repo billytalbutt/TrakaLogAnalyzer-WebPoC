@@ -5874,6 +5874,11 @@ function adjustFullscreenLogHeight() {
 
 // Add keyboard shortcut for fullscreen (ESC to exit)
 document.addEventListener('keydown', (e) => {
+    // Prevent interfering with input fields, textareas, etc.
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) {
+        return;
+    }
+
     if (e.key === 'Escape') {
         // First check if a single panel is maximized - restore that first
         const maximizedPanel = document.querySelector('.compare-panel.panel-maximized');
@@ -7128,6 +7133,11 @@ function toggleTimeSyncPanel() {
 
 // Keyboard shortcut for toggling time sync panel
 document.addEventListener('keydown', (e) => {
+    // Prevent interfering with input fields, textareas, etc.
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) {
+        return;
+    }
+
     // 'T' key to toggle time sync panel (only when time sync is active)
     if (e.key === 't' || e.key === 'T') {
         const infoPanel = document.getElementById('timeSyncInfo');
