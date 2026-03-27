@@ -49,7 +49,7 @@ if (isElectron) {
         console.log(`[LiveTail PUSH] ${data.name}: +${data.newContent.length} bytes`);
         const fileData = state.files.find(f => f.path === data.path || f.name === data.name);
         if (fileData && data.newContent) {
-            const newLines = data.newContent.split('\n').filter(line => line.trim());
+            const newLines = data.newContent.split(/\r?\n/).filter(line => line.trim());
             if (newLines.length > 0) {
                 // Update byte offset so polling doesn't re-read the same content
                 state.lastReadPositions.set(fileData.name, data.newOffset);
@@ -65,7 +65,7 @@ if (isElectron) {
         if (fileData) {
             // File was rotated/truncated - reload entire content
             fileData.content = data.content;
-            fileData.lines = data.content.split('\n');
+            fileData.lines = data.content.split(/\r?\n/);
             fileData.size = data.content.length;
             state.lastReadPositions.set(fileData.name, data.newOffset);
             parseLogFile(fileData);
@@ -89,12 +89,111 @@ if (isElectron) {
         console.log('File removed:', data.name);
         showToast(`Log file removed: ${data.name}`, 'warning');
     });
+    
+    // Listen for popout window closed
+    window.electronAPI.onPopoutClosed && window.electronAPI.onPopoutClosed((panelIndex) => {
+        restorePoppedOutPanel(panelIndex);
+    });
+    
+    // Listen for cross-window sync events
+    window.electronAPI.onSyncEvent && window.electronAPI.onSyncEvent((type, data) => {
+        handleSyncEvent(type, data);
+    });
 }
 
 /**
- * Scan Traka log directories automatically
+ * Handle sync events received from other windows
  */
-async function scanTrakaLogs() {
+function handleSyncEvent(type, data) {
+    if (type === 'time-sync') {
+        const { timestampStr, targetTime, sourceFileIndex, sourceLine, bounds, nearestLines, offsets } = data;
+        
+        state.timeSyncActive = true;
+        state.timeSyncLastTarget = { timestampStr, targetTime, minTime: targetTime - state.timeSyncRange, maxTime: targetTime + state.timeSyncRange, sourceFileIndex, sourceLine };
+        state.timeSyncBounds = bounds || {};
+        state.timeSyncNearestLines = nearestLines || {};
+        state.timeSyncOffsets = offsets || {};
+        
+        // Update UI
+        const btn = document.getElementById('timeSyncBtn');
+        if (btn) btn.classList.add('active');
+        
+        // Apply sync
+        if (state.compareVirtualScroll) {
+            state.timeSyncScrolling = true;
+            state.compareVirtualScroll.forEach((vs, idx) => {
+                if (vs) {
+                    if (state.timeSyncOffsets[idx] !== undefined) {
+                        vs.panelContent.scrollTop = state.timeSyncOffsets[idx];
+                    }
+                    vs.lastRenderedStart = -1;
+                    updateComparePanelViewport(idx, true);
+                }
+            });
+            setTimeout(() => { state.timeSyncScrolling = false; }, 100);
+        }
+    } else if (type === 'time-sync-clear') {
+        clearTimeSyncHighlights();
+    } else if (type === 'scroll-sync') {
+        if (state.timeSyncActive && state.timeSyncOffsets) {
+            const { sourceIndex, delta } = data;
+            if (state.compareVirtualScroll) {
+                state.timeSyncScrolling = true;
+                if (typeof isSyncingScroll !== 'undefined') isSyncingScroll = true;
+                
+                state.compareVirtualScroll.forEach((vs, index) => {
+                    if (index !== sourceIndex && state.timeSyncOffsets[index] !== undefined && vs) {
+                        vs.panelContent.scrollTop = state.timeSyncOffsets[index] + delta;
+                    }
+                });
+                
+                setTimeout(() => { 
+                    state.timeSyncScrolling = false; 
+                    if (typeof isSyncingScroll !== 'undefined') isSyncingScroll = false;
+                }, 50);
+            }
+        }
+    }
+}
+
+/**
+ * Opens the auto-discover modal options
+ */
+function scanTrakaLogs() {
+    if (!isElectron) {
+        showToast('Directory scanning is only available in Desktop Edition', 'warning');
+        return;
+    }
+    // Reset modal to step 1
+    hideAutoDiscoverLimitStep();
+    document.getElementById('autoDiscoverModal').classList.add('active');
+}
+
+function closeAutoDiscoverModal() {
+    document.getElementById('autoDiscoverModal').classList.remove('active');
+}
+
+function showAutoDiscoverLimitStep(mode, engineName) {
+    window.currentAutoDiscoverMode = mode;
+    const el = document.getElementById('autoDiscoverEngineName');
+    if (el) el.textContent = engineName;
+    document.getElementById('autoDiscoverStep1').style.display = 'none';
+    document.getElementById('autoDiscoverStep2').style.display = 'block';
+}
+
+function hideAutoDiscoverLimitStep() {
+    const step1 = document.getElementById('autoDiscoverStep1');
+    const step2 = document.getElementById('autoDiscoverStep2');
+    if (step1) step1.style.display = 'block';
+    if (step2) step2.style.display = 'none';
+}
+
+/**
+ * Execute specific Traka log discovery mode
+ */
+async function executeAutoDiscover(mode, limit = 'all') {
+    closeAutoDiscoverModal();
+    
     if (!isElectron) {
         showToast('Directory scanning is only available in Desktop Edition', 'warning');
         return;
@@ -109,8 +208,7 @@ async function scanTrakaLogs() {
     // Show loading overlay so user gets visual feedback during scan
     showGlobalLoader('Scanning Traka Directories...', 'Searching for log files in default Traka paths');
     
-    // Clear previously loaded files so we always get a fresh set of newest logs.
-    // Without this, stale files from a previous scan persist alongside the new ones.
+    // Clear previously loaded files so we always get a fresh set of logs.
     if (state.liveTailActive) {
         await stopLiveTail();
     }
@@ -121,7 +219,7 @@ async function scanTrakaLogs() {
     state.lastReadPositions.clear();
     
     try {
-        const result = await window.electronAPI.scanTrakaLogs();
+        const result = await window.electronAPI.scanTrakaLogs(mode, limit);
         
         if (result.success) {
             electronState.scannedFiles = result.files;
@@ -236,7 +334,7 @@ async function openElectronFilePicker() {
  *   Used to create a unique display name when multiple directories contain
  *   identically-named files like Debugging_Log.txt.
  */
-async function loadFileFromPath(filePath, engineType = null) {
+async function loadFileFromPath(filePath, engineType = null, skipUIUpdate = false) {
     if (!isElectron) return;
     
     try {
@@ -244,7 +342,7 @@ async function loadFileFromPath(filePath, engineType = null) {
         
         if (result.success) {
             const isConfig = result.name.endsWith('.cfg');
-            const lines = result.content.split('\n');
+            const lines = result.content.split(/\r?\n/);
             
             // Create a unique name for the file. Generic filenames like
             // "Debugging_Log.txt" appear in every Traka engine directory,
@@ -252,8 +350,12 @@ async function loadFileFromPath(filePath, engineType = null) {
             // state.files, lastReadPositions, parsedLogs, and issues.
             let uniqueName = result.name;
             if (engineType) {
-                const genericNames = ['debugging_log.txt', 'debugging_log.log'];
-                if (genericNames.includes(result.name.toLowerCase())) {
+                // If it's a generic name or an archived generic name (e.g. Debugging_Log.txt.20240319)
+                const lowerName = result.name.toLowerCase();
+                if (lowerName.includes('debugging_log')) {
+                    uniqueName = `${engineType} - ${result.name}`;
+                } else if (!lowerName.includes(engineType.toLowerCase())) {
+                    // Prefix engine type if not already in the name
                     uniqueName = `${engineType} - ${result.name}`;
                 }
             }
@@ -296,14 +398,16 @@ async function loadFileFromPath(filePath, engineType = null) {
                 detectIssues(fileData);
             }
             
-            // Update UI components
-            updateUI();
-            updateFileDropdown();
-            updateFilesList();
-            
-            const comparePage = document.getElementById('page-compare');
-            if (comparePage && comparePage.classList.contains('active')) {
-                updateCompareView();
+            // Update UI components if not skipping
+            if (!skipUIUpdate) {
+                updateUI();
+                updateFileDropdown();
+                updateFilesList();
+                
+                const comparePage = document.getElementById('page-compare');
+                if (comparePage && comparePage.classList.contains('active')) {
+                    updateCompareView();
+                }
             }
             
             return fileData;
@@ -442,7 +546,55 @@ function sortFilesForCompare(files) {
     return files.sort((a, b) => {
         const orderA = order[a.engineType] || 999;
         const orderB = order[b.engineType] || 999;
-        return orderA - orderB;
+        
+        // Primary sort: Engine type
+        if (orderA !== orderB) {
+            return orderA - orderB;
+        }
+        
+        // Secondary sort: Is it the "current" log? (has no numbers/dates in the filename suffix)
+        // e.g. "Debugging_Log.txt" is current, "Debugging_Log_20260110.txt" is historical.
+        const originalA = (a.originalName || a.name || '').toLowerCase();
+        const originalB = (b.originalName || b.name || '').toLowerCase();
+        
+        const hasDateA = /\.(?:txt|log)\.([^.]+)$/i.test(originalA) || /[_-](\d+)\.(?:txt|log|cfg)$/i.test(originalA);
+        const hasDateB = /\.(?:txt|log)\.([^.]+)$/i.test(originalB) || /[_-](\d+)\.(?:txt|log|cfg)$/i.test(originalB);
+        
+        if (!hasDateA && hasDateB) return -1; // A is current, so it goes first
+        if (hasDateA && !hasDateB) return 1;  // B is current, so it goes first
+        
+        // Tertiary sort: Modification date descending (newest historical first, oldest at the bottom)
+        // Extract date from filename robustly to ignore OS modified time differences
+        const extractDate = (filename) => {
+            let match = filename.match(/(\d{8})/);
+            if (match) {
+                const year = parseInt(match[1].substring(0, 4), 10);
+                const month = parseInt(match[1].substring(4, 6), 10);
+                const day = parseInt(match[1].substring(6, 8), 10);
+                return new Date(year, month - 1, day).getTime();
+            }
+            match = filename.match(/(\d{4}-\d{2}-\d{2})/);
+            if (match) {
+                return new Date(match[1]).getTime();
+            }
+            // If it's just a backup index (e.g. .txt.1, .txt.2), use the index as a small offset
+            match = filename.match(/\.(?:txt|log)\.(\d+)$/i);
+            if (match && parseInt(match[1]) < 1000) {
+                return -parseInt(match[1]); // Lower index (1) is newer than (2), so make it negative to sort higher
+            }
+            return 0;
+        };
+        
+        const filenameDateA = extractDate(originalA);
+        const filenameDateB = extractDate(originalB);
+        
+        if (filenameDateA !== filenameDateB) {
+            return filenameDateB - filenameDateA; // Descending
+        }
+        
+        const dateA = a.lastModified ? new Date(a.lastModified).getTime() : 0;
+        const dateB = b.lastModified ? new Date(b.lastModified).getTime() : 0;
+        return dateB - dateA;
     });
 }
 
@@ -468,7 +620,7 @@ async function loadSelectedDiscoveredFiles() {
     for (const file of sortedFiles) {
         if (file) {
             updateGlobalLoaderText('Loading Log Files...', `Loading ${file.name} (${loadedCount + 1}/${sortedFiles.length})`);
-            const result = await loadFileFromPath(file.path, file.engineType || null);
+            const result = await loadFileFromPath(file.path, file.engineType || null, true);
             if (result) loadedCount++;
         }
     }
@@ -476,10 +628,24 @@ async function loadSelectedDiscoveredFiles() {
     hideGlobalLoader();
     
     if (loadedCount > 0) {
+        // Ensure files are sorted correctly after parallel batch loading
+        state.files = sortFilesForCompare(state.files);
+        
+        updateUI();
+        updateFileDropdown();
+        updateFilesList();
+        
         // Ensure the first file is selected for the viewer
         if (state.currentFileIndex === -1 && state.files.length > 0) {
             state.currentFileIndex = 0;
         }
+        
+        // Navigate to compare view if coming from there, or viewer
+        const comparePage = document.getElementById('page-compare');
+        if (comparePage && comparePage.classList.contains('active')) {
+            updateCompareView();
+        }
+        
         showToast(`Successfully loaded ${loadedCount} file(s) - ready for viewing and comparison`, 'success');
         navigateTo('viewer');
     }
@@ -508,20 +674,28 @@ async function autoLoadDiscoveredFilesForCompare(files) {
         const batchNames = batch.map(f => f.name).join(', ');
         updateGlobalLoaderText('Loading Log Files...', `Loading ${batchNames} (${Math.min(i + BATCH_SIZE, totalFiles)}/${totalFiles})`);
         
-        // Load batch in parallel
+        // Load batch in parallel, skip UI updates during batch load to drastically improve performance
         const results = await Promise.all(
-            batch.map(file => loadFileFromPath(file.path, file.engineType || null))
+            batch.map(file => loadFileFromPath(file.path, file.engineType || null, true))
         );
         loadedCount += results.filter(Boolean).length;
     }
     
     if (loadedCount > 0) {
+        // Now that all files are loaded and parsed, do a single bulk UI update
+        updateUI();
+        updateFileDropdown();
+        updateFilesList();
+        
         // Ensure the first file is selected for the viewer when the user visits it
         if (state.currentFileIndex === -1 && state.files.length > 0) {
             state.currentFileIndex = 0;
         }
         // Navigate to compare view to see files side-by-side
         navigateTo('compare');
+        
+        // Force the compare view to update once
+        updateCompareView();
     } else {
         showToast('Failed to load any files', 'error');
     }
@@ -701,7 +875,6 @@ const state = {
     activeFilter: 'all',
     activeCategory: 'all',
     syncScroll: false,
-    compareLayout: 'grid', // 'grid' (default 2x2 for 4 files) or 'horizontal' (side-by-side single row)
     liveTailActive: false,
     liveTailInterval: null,
     liveTailFileHandles: new Map(), // Store file handles for live monitoring
@@ -719,7 +892,10 @@ const state = {
     dateSortOrder: 'none', // Date sorting: 'none', 'asc', 'desc'
     highlightRules: [], // Custom text highlighting rules (BareTail-style)
     minimizedPanels: new Set(), // Track minimized compare panels by file index
+    poppedOutPanels: new Set(), // Track popped out panels by file index
     compareSearchFilterMode: false, // false = highlight mode, true = filter (show matches only)
+    dateFromPicker: null, // Flatpickr instance for start date
+    dateToPicker: null, // Flatpickr instance for end date
     engineFilters: {
         business: false,
         comms: false,
@@ -839,9 +1015,6 @@ function initializeApp() {
         
         console.log('  ✓ Initializing scroll sync...');
         initScrollSync(); // Initialize scroll synchronization for line numbers
-        
-        console.log('  ✓ Restoring compare layout preference...');
-        restoreCompareLayoutPreference();
         
         // Initialize solution cards system
         if (typeof initializeSolutionsPanel === 'function') {
@@ -1212,11 +1385,46 @@ function detectEngineType(filename) {
  * Works for all log files, not just generic debugging_log.txt.
  */
 /**
+ * Helper to format raw date strings from log filenames into clearly formatted local dates
+ */
+function formatArchiveDate(dateStr) {
+    if (!dateStr) return '';
+    
+    // Check for 8-digit date: YYYYMMDD (e.g. 20260110)
+    if (/^\d{8}$/.test(dateStr)) {
+        const year = parseInt(dateStr.substring(0, 4), 10);
+        const month = parseInt(dateStr.substring(4, 6), 10); // 1-12
+        const day = parseInt(dateStr.substring(6, 8), 10);
+        const d = new Date(year, month - 1, day);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '');
+        }
+    }
+    
+    // Check for YYYY-MM-DD (e.g. 2024-03-19)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        const parts = dateStr.split('-');
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        const day = parseInt(parts[2], 10);
+        const d = new Date(year, month - 1, day);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '');
+        }
+    }
+    
+    // Fallback: return as-is (could be just an index like "1" or "2")
+    return dateStr;
+}
+
+/**
  * Get a clean, short human-readable label for a log file.
  * Always visible in the panel header — no need to hover.
  * Examples: "Business Engine Log", "Comms Engine Log", "CCure Integration Log"
  */
 function getShortLabel(file) {
+    let baseLabel = '';
+    
     if (file.engineType) {
         // Map engineType to clean short labels
         const labelMap = {
@@ -1234,25 +1442,40 @@ function getShortLabel(file) {
             'CCure Integration':              'CCure Integration Log',
             'Integration Log':                'Integration Log'
         };
-        return labelMap[file.engineType] || `${file.engineType} Log`;
+        baseLabel = labelMap[file.engineType] || `${file.engineType} Log`;
+    } else {
+        // Fallback: try to detect from filename or content
+        const lower = (file.originalName || file.name).toLowerCase();
+        if (lower.includes('business')) baseLabel = 'Business Engine Log';
+        else if (lower.includes('comms')) baseLabel = 'Comms Engine Log';
+        else if (lower.includes('integration') && lower.includes('monitor')) baseLabel = 'Integration Monitor Log';
+        else if (lower.includes('integration') && lower.includes('service')) baseLabel = 'Integration Service Log';
+        else if (lower.includes('ccure')) baseLabel = 'CCure Integration Log';
+        else if (lower.includes('sipass')) baseLabel = 'SiPass Integration Log';
+        else if (lower.includes('symmetry')) baseLabel = 'Symmetry Integration Log';
+        else if (lower.includes('onguard') || lower.includes('lenel')) baseLabel = 'OnGuard Integration Log';
+        else if (lower.includes('postbox')) baseLabel = 'PostBox Integration Log';
+        else if (lower.includes('activedirectory') || lower.includes('active_directory')) baseLabel = 'Active Directory Integration Log';
+        else if (lower.includes('trakaweb') || lower.includes('mvcapp')) baseLabel = 'TrakaWEB Log';
+        else baseLabel = file.originalName || file.name;
     }
     
-    // Fallback: try to detect from filename or content
-    const lower = (file.originalName || file.name).toLowerCase();
-    if (lower.includes('business')) return 'Business Engine Log';
-    if (lower.includes('comms')) return 'Comms Engine Log';
-    if (lower.includes('integration') && lower.includes('monitor')) return 'Integration Monitor Log';
-    if (lower.includes('integration') && lower.includes('service')) return 'Integration Service Log';
-    if (lower.includes('ccure')) return 'CCure Integration Log';
-    if (lower.includes('sipass')) return 'SiPass Integration Log';
-    if (lower.includes('symmetry')) return 'Symmetry Integration Log';
-    if (lower.includes('onguard') || lower.includes('lenel')) return 'OnGuard Integration Log';
-    if (lower.includes('postbox')) return 'PostBox Integration Log';
-    if (lower.includes('activedirectory') || lower.includes('active_directory')) return 'Active Directory Integration Log';
-    if (lower.includes('trakaweb') || lower.includes('mvcapp')) return 'TrakaWEB Log';
+    // Append archive suffixes (e.g. .txt.1, .log.20240319) or inline dates (e.g. Debugging_Log_20260110.txt)
+    const original = file.originalName || file.name || '';
     
-    // Last resort: return the filename
-    return file.originalName || file.name;
+    // Check for suffix like .txt.1 or .log.20240319
+    const suffixMatch = original.match(/\.(?:txt|log)\.([^.]+)$/i);
+    if (suffixMatch && baseLabel !== original) {
+        baseLabel += ` (${formatArchiveDate(suffixMatch[1])})`;
+    } else {
+        // Check for inline date/number like Debugging_Log_20260110.txt
+        const inlineMatch = original.match(/[_-]([0-9-]+)\.(?:txt|log|cfg)$/i);
+        if (inlineMatch && baseLabel !== original) {
+            baseLabel += ` (${formatArchiveDate(inlineMatch[1])})`;
+        }
+    }
+    
+    return baseLabel;
 }
 
 function getDisplayFileName(file) {
@@ -1336,10 +1559,12 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
         const isConfig = file.name.endsWith('.cfg');
         const fileData = {
             name: file.name,
+            originalName: file.name,
+            path: file.path, // Desktop Edition provides absolute path here
             size: file.size,
             lastModified: new Date(file.lastModified),
             content: content,
-            lines: content.split('\n'),
+            lines: content.split(/\r?\n/),
             fileHandle: file, // Store original File object for live monitoring
             isConfig: isConfig, // Flag to identify config files
             engineType: null
@@ -1437,31 +1662,40 @@ function parseLogFile(fileData) {
     state.parsedLogs.set(fileData.name, parsed);
 }
 
+// Pre-compile regular expressions for performance
+const logLevelErrorRegex = /\berror\b|\bfail|\bexception\b|\bcritical\b|\bfatal\b/;
+const logLevelWarnRegex = /\bwarn\b|\bwarning\b/;
+const logLevelInfoRegex = /\binfo\b|\binformation\b/;
+const logLevelDebugRegex = /\bdebug\b|\btrace\b|\bverbose\b/;
+
 function detectLogLevel(line) {
     const lowerLine = line.toLowerCase();
-    if (/\berror\b|\bfail|\bexception\b|\bcritical\b|\bfatal\b/.test(lowerLine)) return 'error';
-    if (/\bwarn\b|\bwarning\b/.test(lowerLine)) return 'warning';
-    if (/\binfo\b|\binformation\b/.test(lowerLine)) return 'info';
-    if (/\bdebug\b|\btrace\b|\bverbose\b/.test(lowerLine)) return 'debug';
+    if (logLevelErrorRegex.test(lowerLine)) return 'error';
+    if (logLevelWarnRegex.test(lowerLine)) return 'warning';
+    if (logLevelInfoRegex.test(lowerLine)) return 'info';
+    if (logLevelDebugRegex.test(lowerLine)) return 'debug';
     return 'default';
 }
 
+// Common timestamp patterns - pre-compiled for performance
+const timestampPatterns = [
+    // ISO format with optional milliseconds: 2024-01-19 14:25:30.123 or 2024-01-19T14:25:30.123
+    /(\d{4}-\d{2}-\d{2}[T\s]+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
+    // UK/European format with optional milliseconds: 19/01/2024 14:25:30.123
+    /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
+    // US format with optional milliseconds: 01-19-2024 14:25:30.123
+    /(\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
+    // Time only with optional milliseconds in brackets: [14:25:30.123]
+    /\[(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\]/,
+    // Time only with optional milliseconds: 14:25:30.123
+    /\b(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\b/
+];
+
 function extractTimestamp(line) {
-    // Common timestamp patterns - including milliseconds
-    const patterns = [
-        // ISO format with optional milliseconds: 2024-01-19 14:25:30.123 or 2024-01-19T14:25:30.123
-        /(\d{4}-\d{2}-\d{2}[T\s]+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
-        // UK/European format with optional milliseconds: 19/01/2024 14:25:30.123
-        /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
-        // US format with optional milliseconds: 01-19-2024 14:25:30.123
-        /(\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)/,
-        // Time only with optional milliseconds in brackets: [14:25:30.123]
-        /\[(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\]/,
-        // Time only with optional milliseconds: 14:25:30.123
-        /\b(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\b/
-    ];
+    // Fast path: if line has no numbers, it can't have a timestamp
+    if (!/\d/.test(line)) return null;
     
-    for (const pattern of patterns) {
+    for (const pattern of timestampPatterns) {
         const match = line.match(pattern);
         if (match) return match[1];
     }
@@ -1474,7 +1708,52 @@ function extractTimestamp(line) {
 function detectIssues(fileData) {
     const fileIssues = [];
     
-    fileData.lines.forEach((line, index) => {
+    // Pre-compile custom regexes for this file to avoid recreating them for every line
+    const compiledCustomPatterns = state.settings.customPatterns.map(custom => {
+        try {
+            return {
+                ...custom,
+                regex: new RegExp(custom.pattern, 'i')
+            };
+        } catch (e) {
+            return null;
+        }
+    }).filter(Boolean);
+    
+    // Check if file is small enough for synchronous processing to avoid UI flash,
+    // otherwise use chunked async processing
+    if (fileData.lines.length < 50000) {
+        detectIssuesSync(fileData, fileIssues, compiledCustomPatterns);
+    } else {
+        detectIssuesAsync(fileData, fileIssues, compiledCustomPatterns);
+    }
+}
+
+function detectIssuesSync(fileData, fileIssues, compiledCustomPatterns) {
+    processIssueChunk(fileData, fileIssues, compiledCustomPatterns, 0, fileData.lines.length);
+    finalizeIssueDetection(fileData, fileIssues);
+}
+
+function detectIssuesAsync(fileData, fileIssues, compiledCustomPatterns, startIndex = 0) {
+    const CHUNK_SIZE = 25000;
+    const endIndex = Math.min(startIndex + CHUNK_SIZE, fileData.lines.length);
+    
+    processIssueChunk(fileData, fileIssues, compiledCustomPatterns, startIndex, endIndex);
+    
+    if (endIndex < fileData.lines.length) {
+        // Yield to main thread
+        setTimeout(() => {
+            detectIssuesAsync(fileData, fileIssues, compiledCustomPatterns, endIndex);
+        }, 0);
+    } else {
+        finalizeIssueDetection(fileData, fileIssues);
+    }
+}
+
+function processIssueChunk(fileData, fileIssues, compiledCustomPatterns, startIndex, endIndex) {
+    for (let index = startIndex; index < endIndex; index++) {
+        const line = fileData.lines[index];
+        
         // First, check solution database for known issues with solutions
         const solution = matchSolution(line);
         if (solution) {
@@ -1491,7 +1770,7 @@ function detectIssues(fileData) {
                 hasSolution: true,
                 solution: solution
             });
-            return; // Skip other pattern checks if we found a solution
+            continue; // Skip other pattern checks if we found a solution
         }
         
         // Then check regular issue patterns
@@ -1517,29 +1796,26 @@ function detectIssues(fileData) {
         }
         
         // Check custom patterns
-        state.settings.customPatterns.forEach(custom => {
-            try {
-                const regex = new RegExp(custom.pattern, 'i');
-                if (regex.test(line)) {
-                    fileIssues.push({
-                        id: `${fileData.name}-${index}-custom-${Date.now()}`,
-                        file: fileData.name,
-                        line: index + 1,
-                        content: line,
-                        severity: custom.severity,
-                        category: custom.severity,
-                        title: 'Custom Pattern Match',
-                        description: custom.description || 'Custom pattern detected',
-                        pattern: custom.pattern,
-                        hasSolution: false
-                    });
-                }
-            } catch (e) {
-                // Invalid regex, skip
+        for (const custom of compiledCustomPatterns) {
+            if (custom.regex.test(line)) {
+                fileIssues.push({
+                    id: `${fileData.name}-${index}-custom-${Date.now()}`,
+                    file: fileData.name,
+                    line: index + 1,
+                    content: line,
+                    severity: custom.severity,
+                    category: custom.severity,
+                    title: 'Custom Pattern Match',
+                    description: custom.description || 'Custom pattern detected',
+                    pattern: custom.pattern,
+                    hasSolution: false
+                });
             }
-        });
-    });
-    
+        }
+    }
+}
+
+function finalizeIssueDetection(fileData, fileIssues) {
     // Remove old issues for this file and add new ones
     state.issues = state.issues.filter(i => i.file !== fileData.name);
     state.issues = [...state.issues, ...fileIssues];
@@ -1576,10 +1852,118 @@ function shouldDetectIssue(pattern) {
 // ============================================
 // Log Display
 // ============================================
+
+function updateDateFilterLimits(entries) {
+    const dateFromInput = document.getElementById('dateFrom');
+    const dateToInput = document.getElementById('dateTo');
+    
+    if (!dateFromInput || !dateToInput) return;
+    
+    if (!entries || entries.length === 0) {
+        dateFromInput.removeAttribute('min');
+        dateFromInput.removeAttribute('max');
+        dateToInput.removeAttribute('min');
+        dateToInput.removeAttribute('max');
+        return;
+    }
+    
+    let minTime = Infinity;
+    let maxTime = -Infinity;
+    let lastKnownTime = 0;
+    
+    for (const entry of entries) {
+        let time = null;
+        if (entry.cachedTime) {
+            time = entry.cachedTime;
+        } else if (entry.sortableTimestamp) {
+            time = entry.sortableTimestamp;
+            entry.cachedTime = time;
+        } else if (entry.timestamp) {
+            time = typeof parseTimestampForStitch === 'function' ? parseTimestampForStitch(entry.timestamp) : new Date(entry.timestamp).getTime();
+            entry.cachedTime = time; // Cache it for future calls
+        }
+        
+        if (time !== null && !isNaN(time) && time > 0) {
+            lastKnownTime = time;
+            if (time < minTime) minTime = time;
+            if (time > maxTime) maxTime = time;
+        } else if (lastKnownTime > 0) {
+            // If it has no timestamp (stack trace, stitch break), inherit the last known time
+            // so it stays grouped with its parent entry during date filtering!
+            entry.cachedTime = lastKnownTime;
+        }
+    }
+    
+    // Quick backward pass to ensure files that start with no timestamp don't get completely dropped
+    let firstValidTime = 0;
+    for (const entry of entries) {
+        if (entry.cachedTime > 0) {
+            firstValidTime = entry.cachedTime;
+            break;
+        }
+    }
+    if (firstValidTime > 0) {
+        for (const entry of entries) {
+            if (!entry.cachedTime || entry.cachedTime === 0) {
+                entry.cachedTime = firstValidTime;
+            }
+        }
+    }
+    
+    if (minTime !== Infinity && maxTime !== -Infinity) {
+        const toLocalISOString = (timestamp) => {
+            const date = new Date(timestamp);
+            const pad = (n) => (n < 10 ? '0' + n : n);
+            return date.getFullYear() + '-' +
+                   pad(date.getMonth() + 1) + '-' +
+                   pad(date.getDate()) + 'T' +
+                   pad(date.getHours()) + ':' +
+                   pad(date.getMinutes());
+        };
+        
+        const minStr = toLocalISOString(minTime);
+        const maxStr = toLocalISOString(maxTime);
+        
+        dateFromInput.min = minStr;
+        dateFromInput.max = maxStr;
+        dateToInput.min = minStr;
+        dateToInput.max = maxStr;
+        
+        if (state.dateFromPicker) {
+            state.dateFromPicker.set('minDate', minTime);
+            state.dateFromPicker.set('maxDate', maxTime);
+        }
+        if (state.dateToPicker) {
+            state.dateToPicker.set('minDate', minTime);
+            state.dateToPicker.set('maxDate', maxTime);
+        }
+    } else {
+        dateFromInput.removeAttribute('min');
+        dateFromInput.removeAttribute('max');
+        dateToInput.removeAttribute('min');
+        dateToInput.removeAttribute('max');
+        
+        if (state.dateFromPicker) {
+            state.dateFromPicker.set('minDate', null);
+            state.dateFromPicker.set('maxDate', null);
+        }
+        if (state.dateToPicker) {
+            state.dateToPicker.set('minDate', null);
+            state.dateToPicker.set('maxDate', null);
+        }
+    }
+}
+
 function displayLog(fileData) {
     const gutter = document.getElementById('logGutter');
     const content = document.getElementById('logContent');
     const toggleContainer = document.getElementById('stitchBreakToggleContainer');
+    
+    if (fileData && fileData.isStitched) {
+        displayStitchedLog(fileData);
+        updateIssuesUI();
+        return;
+    }
     
     if (toggleContainer) {
         toggleContainer.style.display = 'none';
@@ -1601,6 +1985,10 @@ function displayLog(fileData) {
     }
     
     const parsed = state.parsedLogs.get(fileData.name) || [];
+    
+    // Update date filter limits based on the loaded log
+    updateDateFilterLimits(parsed);
+    
     let filteredLines = filterLines(parsed);
     
     // Apply date sorting if enabled
@@ -1640,6 +2028,85 @@ function renderLogOptimized(fileData, filteredLines, gutter, content) {
     }
 
     setupViewerVirtualScroll(fileData, filteredLines, gutter, content);
+}
+
+function renderLogBatched(fileData, filteredLines, gutter, content, startIdx, batchSize, callback) {
+    const endIdx = Math.min(startIdx + batchSize, filteredLines.length);
+    
+    // Build HTML for this batch
+    const batchHTML = [];
+    const gutterHTML = [];
+    
+    for (let i = startIdx; i < endIdx; i++) {
+        const entry = filteredLines[i];
+        
+        // Gutter
+        if (state.settings.showLineNumbers) {
+            if (entry.isSeparator) {
+                gutterHTML.push(`<div class="line-number" data-line="-1">-</div>`);
+            } else {
+                gutterHTML.push(`<div class="line-number" data-line="${entry.lineNumber}">${entry.lineNumber}</div>`);
+            }
+        }
+        
+        // Content
+        if (fileData.isConfig) {
+            let highlightedLine = escapeHtml(entry.raw);
+            if (entry.raw.trim().startsWith('[') && entry.raw.trim().endsWith(']')) {
+                highlightedLine = `<span style="color: var(--accent-primary); font-weight: 600;">${highlightedLine}</span>`;
+            } else if (entry.raw.trim().startsWith('#') || entry.raw.trim().startsWith(';')) {
+                highlightedLine = `<span style="color: var(--text-tertiary); font-style: italic;">${highlightedLine}</span>`;
+            } else if (entry.raw.includes('=')) {
+                const parts = entry.raw.split('=');
+                if (parts.length >= 2) {
+                    const key = escapeHtml(parts[0]);
+                    const value = escapeHtml(parts.slice(1).join('='));
+                    highlightedLine = `<span style="color: var(--accent-secondary);">${key}</span>=<span style="color: var(--text-primary);">${value}</span>`;
+                }
+            }
+            batchHTML.push(`<div class="log-line config-line" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`);
+        } else {
+            const levelClass = (!fileData.skipErrorRendering && entry.level !== 'default') ? entry.level : '';
+            let highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
+                ? highlightSearchTerms(escapeHtml(entry.raw))
+                : escapeHtml(entry.raw);
+            
+            if (state.highlightRules && state.highlightRules.length > 0) {
+                highlightedLine = applyHighlightRules(entry.raw, fileData.name);
+            }
+            
+            if (entry.isSeparator) {
+                batchHTML.push(`<div class="log-line stitched-separator" data-line="-1" data-vindex="${i}">${highlightedLine}</div>`);
+            } else {
+                let sourceHtml = '';
+                let extraClass = '';
+                if (entry.sourceFile && fileData.isStitched) {
+                    const fileColor = getFileColor(entry.sourceFile);
+                    sourceHtml = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
+                    extraClass = ' stitched-line';
+                }
+                
+                batchHTML.push(`<div class="log-line ${levelClass}${extraClass}" data-line="${entry.lineNumber}" data-vindex="${i}"${entry.sourceFile && fileData.isStitched ? ` data-source="${escapeHtml(entry.sourceFile)}"` : ''}>${sourceHtml}${highlightedLine || '&nbsp;'}</div>`);
+            }
+        }
+    }
+    
+    // Use insertAdjacentHTML which is massively faster than appending elements one by one or using innerHTML on empty divs
+    if (state.settings.showLineNumbers) {
+        gutter.insertAdjacentHTML('beforeend', gutterHTML.join(''));
+    }
+    content.insertAdjacentHTML('beforeend', batchHTML.join(''));
+    
+    // Yield to browser minimally to allow paint but keep speed high
+    if (endIdx < filteredLines.length) {
+        if (startIdx % 4000 === 0) {
+             setTimeout(() => renderLogBatched(fileData, filteredLines, gutter, content, endIdx, batchSize, callback), 1);
+        } else {
+             renderLogBatched(fileData, filteredLines, gutter, content, endIdx, batchSize, callback);
+        }
+    } else {
+        if (callback) callback();
+    }
 }
 
 function cleanupViewerVirtualScroll() {
@@ -1751,7 +2218,7 @@ function updateViewerViewport(force) {
 
     for (let i = startIdx; i < endIdx; i++) {
         const entry = lines[i];
-        const levelClass = entry.level !== 'default' ? entry.level : '';
+        const levelClass = (!fileData.skipErrorRendering && entry.level !== 'default') ? entry.level : '';
         let displayLine;
 
         if (fileData.isConfig) {
@@ -1784,7 +2251,14 @@ function updateViewerViewport(force) {
         if (entry.isSeparator) {
             html.push(`<div class="log-line stitched-separator" data-line="-1" data-vindex="${i}">${displayLine}</div>`);
         } else {
-            html.push(`<div class="log-line ${cssClass}${searchClass}${currentMatchClass}" data-line="${entry.lineNumber}" data-vindex="${i}">${displayLine || '&nbsp;'}</div>`);
+            let sourceHtml = '';
+            let extraClass = '';
+            if (entry.sourceFile && fileData.isStitched) {
+                const fileColor = getFileColor(entry.sourceFile);
+                sourceHtml = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
+                extraClass = ' stitched-line';
+            }
+            html.push(`<div class="log-line ${cssClass}${searchClass}${currentMatchClass}${extraClass}" data-line="${entry.lineNumber}" data-vindex="${i}"${entry.sourceFile && fileData.isStitched ? ` data-source="${escapeHtml(entry.sourceFile)}"` : ''}>${sourceHtml}${displayLine || '&nbsp;'}</div>`);
         }
     }
 
@@ -1852,7 +2326,7 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
     } else {
         // Regular log file display
         contentDiv.innerHTML = filteredLines.map(entry => {
-            const levelClass = entry.level !== 'default' ? entry.level : '';
+            const levelClass = (!fileData.skipErrorRendering && entry.level !== 'default') ? entry.level : '';
             let highlightedLine = state.settings.highlightSearch && state.searchMatches.length > 0 
                 ? highlightSearchTerms(escapeHtml(entry.raw))
                 : escapeHtml(entry.raw);
@@ -1867,7 +2341,15 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
                 return `<div class="log-line stitched-separator" data-line="-1">${highlightedLine}</div>`;
             }
             
-            return `<div class="log-line ${levelClass}" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
+            let sourceHtml = '';
+            let extraClass = '';
+            if (entry.sourceFile && fileData.isStitched) {
+                const fileColor = getFileColor(entry.sourceFile);
+                sourceHtml = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
+                extraClass = ' stitched-line';
+            }
+            
+            return `<div class="log-line ${levelClass}${extraClass}" data-line="${entry.lineNumber}"${entry.sourceFile && fileData.isStitched ? ` data-source="${escapeHtml(entry.sourceFile)}"` : ''}>${sourceHtml}${highlightedLine || '&nbsp;'}</div>`;
         }).join('');
     }
     
@@ -1901,12 +2383,36 @@ function filterLines(parsed) {
     const hasLevelFilter = state.activeFilter !== 'all';
     const hasActiveEngineFilter = Object.values(state.engineFilters).some(v => v);
     
+    // Check if we are currently using a custom search query as a filter in the viewer
+    const query = document.getElementById('searchInput')?.value.trim();
+    const isSearchFiltered = document.getElementById('viewerSearchFilters')?.classList.contains('active') && 
+                             document.getElementById('filterBySearch')?.checked && query;
+                             
+    let searchRegex = null;
+    if (isSearchFiltered) {
+        if (query.startsWith('/') && query.endsWith('/')) {
+            try {
+                searchRegex = new RegExp(query.slice(1, -1), 'i');
+            } catch (e) {
+                // Ignore invalid regex
+            }
+        } else {
+            searchRegex = new RegExp(escapeRegex(query), 'i');
+        }
+    }
+    
     const dateFrom = document.getElementById('dateFrom')?.value;
     const dateTo = document.getElementById('dateTo')?.value;
     const hasDateFilter = dateFrom || dateTo;
     
     const dateFromObj = dateFrom ? new Date(dateFrom) : null;
-    const dateToObj = dateTo ? new Date(dateTo) : null;
+    let dateToObj = dateTo ? new Date(dateTo) : null;
+    
+    // Since the date picker only allows selecting down to the minute, 
+    // we should extend the "To" date to cover the entire minute (add 59.999 seconds)
+    if (dateToObj) {
+        dateToObj = new Date(dateToObj.getTime() + 59999);
+    }
     
     // Pre-compile regex patterns for engine filters if needed
     let commsPattern = null;
@@ -1925,8 +2431,13 @@ function filterLines(parsed) {
         }
     }
     
-    // Single-pass filter - check all conditions at once
+        // Single-pass filter - check all conditions at once
     const filtered = parsed.filter(entry => {
+        // Always preserve stitch breaks so the user knows where file boundaries are
+        if (entry.isSeparator) {
+            return true;
+        }
+        
         // Level filter
         if (hasLevelFilter && entry.level !== state.activeFilter) {
             return false;
@@ -1951,10 +2462,25 @@ function filterLines(parsed) {
         }
         
         // Date filter
-        if (hasDateFilter && entry.timestamp) {
-            const entryDate = new Date(entry.timestamp);
-            if (dateFromObj && entryDate < dateFromObj) return false;
-            if (dateToObj && entryDate > dateToObj) return false;
+        if (hasDateFilter) {
+            let time = entry.cachedTime;
+            if (!time && entry.timestamp) {
+                time = new Date(entry.timestamp).getTime();
+            }
+            
+            if (time) {
+                if (dateFromObj && time < dateFromObj.getTime()) return false;
+                if (dateToObj && time > dateToObj.getTime()) return false;
+            } else {
+                // If the line has NO time and NO inherited time (e.g. very start of log),
+                // we technically can't date filter it accurately. But to prevent it from vanishing,
+                // we just let it pass through.
+            }
+        }
+        
+        // Search string filter
+        if (searchRegex && !searchRegex.test(entry.raw)) {
+            return false;
         }
         
         return true;
@@ -2356,23 +2882,36 @@ function initFilters() {
     });
     
     // Date filter changes
-    document.getElementById('dateFrom')?.addEventListener('change', () => {
+    const handleDateChange = () => {
         if (state.filterDebounceTimer) clearTimeout(state.filterDebounceTimer);
         state.filterDebounceTimer = setTimeout(() => {
             if (state.currentFileIndex >= 0) {
                 displayLog(state.files[state.currentFileIndex]);
             }
         }, 200);
-    });
-    
-    document.getElementById('dateTo')?.addEventListener('change', () => {
-        if (state.filterDebounceTimer) clearTimeout(state.filterDebounceTimer);
-        state.filterDebounceTimer = setTimeout(() => {
-            if (state.currentFileIndex >= 0) {
-                displayLog(state.files[state.currentFileIndex]);
-            }
-        }, 200);
-    });
+    };
+
+    if (typeof flatpickr !== 'undefined') {
+        const fpConfig = {
+            enableTime: true,
+            time_24hr: true,
+            dateFormat: "Y-m-d\\TH:i",
+            altInput: true,
+            altFormat: "d/m/Y H:i",
+            altInputClass: "date-input",
+            theme: "dark",
+            onChange: handleDateChange
+        };
+        
+        const fromEl = document.getElementById('dateFrom');
+        const toEl = document.getElementById('dateTo');
+        
+        if (fromEl) state.dateFromPicker = flatpickr(fromEl, fpConfig);
+        if (toEl) state.dateToPicker = flatpickr(toEl, fpConfig);
+    } else {
+        document.getElementById('dateFrom')?.addEventListener('change', handleDateChange);
+        document.getElementById('dateTo')?.addEventListener('change', handleDateChange);
+    }
 }
 
 function toggleEngineFilter(engine) {
@@ -2408,8 +2947,17 @@ function toggleEngineFilter(engine) {
 }
 
 function clearDateFilter() {
-    document.getElementById('dateFrom').value = '';
-    document.getElementById('dateTo').value = '';
+    if (state.dateFromPicker) {
+        state.dateFromPicker.clear();
+    } else {
+        document.getElementById('dateFrom').value = '';
+    }
+    
+    if (state.dateToPicker) {
+        state.dateToPicker.clear();
+    } else {
+        document.getElementById('dateTo').value = '';
+    }
     
     if (state.currentFileIndex >= 0) {
         displayLog(state.files[state.currentFileIndex]);
@@ -2480,23 +3028,15 @@ function updateCompareView() {
     // Set data attribute for grid layout
     container.setAttribute('data-file-count', state.files.length);
     
-    // Set CSS variable for file count (used in horizontal layout)
+    // Set CSS variable for file count
     container.style.setProperty('--file-count', state.files.length);
-    
-    // Apply layout class based on current mode
-    container.classList.remove('horizontal-layout', 'tiled-layout');
-    if (state.compareLayout === 'horizontal') {
-        container.classList.add('horizontal-layout');
-    } else if (state.compareLayout === 'tiled') {
-        container.classList.add('tiled-layout');
-    }
     
     // Clean up minimized indices that no longer exist (e.g. after file removal)
     state.minimizedPanels.forEach(idx => {
         if (idx >= state.files.length) state.minimizedPanels.delete(idx);
     });
     
-    // Build panel HTML — minimized panels are hidden via CSS class
+    // Build panel HTML — minimized and popped-out panels are hidden via CSS class
     const panelsHtml = state.files.map((file, index) => {
         const fileTypeBadge = file.isConfig 
             ? '<span class="file-type-badge config" style="margin-left: 0.5rem;">CONFIG</span>' 
@@ -2504,22 +3044,36 @@ function updateCompareView() {
         
         const liveTailClass = state.liveTailActive ? ' live-tail-active' : '';
         const isMinimized = state.minimizedPanels.has(index);
-        const minimizedClass = isMinimized ? ' panel-minimized' : '';
+        const isPoppedOut = state.poppedOutPanels && state.poppedOutPanels.has(index);
+        
+        let extraClasses = '';
+        if (isMinimized) extraClasses += ' panel-minimized';
+        if (isPoppedOut) extraClasses += ' panel-popped-out';
+        
         const shortLabel = getShortLabel(file);
         const originalFile = file.originalName || file.name;
         return `
-        <div class="compare-panel${liveTailClass}${minimizedClass}" data-index="${index}">
+        <div class="compare-panel${liveTailClass}${extraClasses}" data-index="${index}" ${isPoppedOut ? 'style="display: none;"' : ''}>
             <div class="compare-panel-header">
-                <h4 title="${escapeHtml(file.path || originalFile)}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                    </svg>
-                    ${escapeHtml(shortLabel)}${fileTypeBadge}
-                </h4>
-                <div class="file-badge">${file.lines.length.toLocaleString()} lines &middot; ${formatFileSize(file.size)}</div>
+                <div class="compare-panel-title-group">
+                    <h4 title="${escapeHtml(file.path || originalFile)}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                        <span class="panel-title-text">${escapeHtml(shortLabel)}${fileTypeBadge}</span>
+                    </h4>
+                    <div class="file-badge">${file.lines.length.toLocaleString()} lines &middot; ${formatFileSize(file.size)}</div>
+                </div>
                 ${generateComparePanelMatchPills(file)}
                 <div class="compare-panel-actions">
+                    <button class="btn-icon panel-popout-btn" onclick="popOutPanel(${index})" title="Pop out to new window">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                            <polyline points="15 3 21 3 21 9"></polyline>
+                            <line x1="10" y1="14" x2="21" y2="3"></line>
+                        </svg>
+                    </button>
                     <button class="btn-icon panel-minimize-btn" onclick="toggleMinimizePanel(${index})" title="Minimize this panel">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -2714,35 +3268,57 @@ function updateComparePanelViewport(index, force) {
     vs.viewport.style.transform = `translateY(${startIdx * vs.lineHeight}px)`;
 }
 
+let isSyncingScroll = false;
+
 function handleCompareScroll(event, sourceIndex) {
-    if (state.timeSyncScrolling) return; // Ignore programmatic scrolls during sync
+    if (state.timeSyncScrolling || isSyncingScroll) return; // Ignore programmatic scrolls during sync
     
     const sourcePanel = event.target;
     
     // If Time Sync is active and we have an anchor lock, sync scroll by EXACT PIXELS (slot machine mode)
     if (state.timeSyncActive && state.timeSyncOffsets && state.timeSyncOffsets[sourceIndex] !== undefined) {
+        isSyncingScroll = true;
+        
         const currentScroll = sourcePanel.scrollTop;
         const delta = currentScroll - state.timeSyncOffsets[sourceIndex];
         
-        document.querySelectorAll('.compare-panel-content').forEach((panel, index) => {
-            if (index !== sourceIndex && state.timeSyncOffsets[index] !== undefined) {
+        document.querySelectorAll('.compare-panel-content').forEach((panel) => {
+            const index = parseInt(panel.getAttribute('data-panel-index'), 10);
+            if (!isNaN(index) && index !== sourceIndex && state.timeSyncOffsets[index] !== undefined) {
                 panel.scrollTop = state.timeSyncOffsets[index] + delta;
             }
         });
+        
+        // Broadcast scroll sync to popouts
+        if (isElectron) {
+            window.electronAPI.broadcastSync('scroll-sync', { sourceIndex, delta });
+        }
+        
+        // Use setTimeout to reset the flag after the scroll events fire
+        setTimeout(() => {
+            isSyncingScroll = false;
+        }, 50);
+        
         return;
     }
     
     // Otherwise, use proportional sync scroll if enabled
     if (!state.syncScroll) return;
     
+    isSyncingScroll = true;
     const scrollRatio = sourcePanel.scrollTop / (sourcePanel.scrollHeight - sourcePanel.clientHeight);
     
-    document.querySelectorAll('.compare-panel-content').forEach((panel, index) => {
-        if (index !== sourceIndex) {
+    document.querySelectorAll('.compare-panel-content').forEach((panel) => {
+        const index = parseInt(panel.getAttribute('data-panel-index'), 10);
+        if (!isNaN(index) && index !== sourceIndex) {
             const targetScrollTop = scrollRatio * (panel.scrollHeight - panel.clientHeight);
             panel.scrollTop = targetScrollTop;
         }
     });
+    
+    setTimeout(() => {
+        isSyncingScroll = false;
+    }, 50);
 }
 
 function toggleSyncScroll() {
@@ -2754,93 +3330,6 @@ function toggleSyncScroll() {
     } else {
         btn.classList.remove('active');
         showToast('Sync Scroll disabled', 'info');
-    }
-}
-
-function toggleCompareLayout() {
-    const btn = document.getElementById('compareLayoutBtn');
-    const label = document.getElementById('compareLayoutLabel');
-    const icon = document.getElementById('compareLayoutIcon');
-    const container = document.getElementById('compareContainer');
-    const fileCount = state.files.length;
-    
-    if (state.compareLayout === 'grid') {
-        // For 4 files, "grid" is the default side-by-side, so toggle to tiled (2x2 window)
-        if (fileCount === 4) {
-            state.compareLayout = 'tiled';
-            btn.classList.add('active');
-            label.textContent = 'Tiled View';
-            icon.innerHTML = `
-                <rect x="3" y="3" width="7" height="7"></rect>
-                <rect x="14" y="3" width="7" height="7"></rect>
-                <rect x="3" y="14" width="7" height="7"></rect>
-                <rect x="14" y="14" width="7" height="7"></rect>
-            `;
-            container.classList.remove('horizontal-layout');
-            container.classList.add('tiled-layout');
-            showToast('Tiled layout - 2×2 window grid', 'info');
-        } else {
-            state.compareLayout = 'horizontal';
-            btn.classList.add('active');
-            label.textContent = 'Horizontal View';
-            icon.innerHTML = `
-                <rect x="1" y="6" width="5" height="12"></rect>
-                <rect x="7" y="6" width="5" height="12"></rect>
-                <rect x="13" y="6" width="5" height="12"></rect>
-                <rect x="19" y="6" width="4" height="12"></rect>
-            `;
-            container.classList.remove('tiled-layout');
-            container.classList.add('horizontal-layout');
-            showToast('Horizontal layout - panels side by side (best for Time Sync)', 'success');
-        }
-    } else {
-        // Return to default side-by-side grid
-        state.compareLayout = 'grid';
-        btn.classList.remove('active');
-        label.textContent = fileCount === 4 ? 'Side by Side' : 'Grid View';
-        icon.innerHTML = fileCount === 4 ? `
-            <rect x="1" y="6" width="5" height="12"></rect>
-            <rect x="7" y="6" width="5" height="12"></rect>
-            <rect x="13" y="6" width="5" height="12"></rect>
-            <rect x="19" y="6" width="4" height="12"></rect>
-        ` : `
-            <rect x="3" y="3" width="7" height="7"></rect>
-            <rect x="14" y="3" width="7" height="7"></rect>
-            <rect x="3" y="14" width="7" height="7"></rect>
-            <rect x="14" y="14" width="7" height="7"></rect>
-        `;
-        container.classList.remove('horizontal-layout');
-        container.classList.remove('tiled-layout');
-        showToast(fileCount === 4 ? 'Side by side layout - all panels in a row' : 'Grid layout - panels in grid (easier to read)', 'info');
-    }
-    
-    // Save preference to localStorage
-    try {
-        localStorage.setItem('traka-compare-layout', state.compareLayout);
-    } catch (e) {
-        console.error('Failed to save layout preference:', e);
-    }
-}
-
-function restoreCompareLayoutPreference() {
-    try {
-        const savedLayout = localStorage.getItem('traka-compare-layout');
-        if (savedLayout === 'horizontal' || savedLayout === 'tiled') {
-            // Set to grid so toggle switches it to the saved preference
-            state.compareLayout = 'grid';
-            toggleCompareLayout();
-            // If saved was tiled but toggle went to horizontal (non-4-file), that's fine
-            // If saved was horizontal but we have 4 files, toggle gives tiled first — 
-            // need to toggle again for horizontal
-            if (savedLayout === 'horizontal' && state.compareLayout !== 'horizontal' && state.files.length === 4) {
-                // Toggle went to tiled, but we wanted horizontal - toggle once more
-                // Actually for 4 files there's no 'horizontal' separate state, 
-                // the default grid IS side-by-side. So 'grid' = side-by-side for 4 files.
-                // Just restore the saved state directly.
-            }
-        }
-    } catch (e) {
-        console.error('Failed to restore layout preference:', e);
     }
 }
 
@@ -3313,7 +3802,7 @@ async function pollElectronFiles() {
         for (const { fileData, result } of results) {
             if (!result || !result.success || !result.newContent || result.newContent.length === 0) continue;
             
-            const newLines = result.newContent.split('\n').filter(line => line.trim());
+            const newLines = result.newContent.split(/\r?\n/).filter(line => line.trim());
             if (newLines.length === 0) continue;
             
             console.log(`[LiveTail POLL] ${fileData.name}: +${newLines.length} lines, +${result.newContent.length} bytes`);
@@ -3322,7 +3811,7 @@ async function pollElectronFiles() {
             if (result.wasReset) {
                 // File was rotated - full reload is justified here
                 fileData.content = result.newContent;
-                fileData.lines = result.newContent.split('\n');
+                fileData.lines = result.newContent.split(/\r?\n/);
                 fileData.size = result.newContent.length;
                 parseLogFile(fileData);
                 detectIssues(fileData);
@@ -3408,7 +3897,7 @@ async function readFileForTail(fileHandle) {
             if (fullContent.length > lastPosition) {
                 // New content available
                 const newContent = fullContent.substring(lastPosition);
-                const newLines = newContent.split('\n').filter(line => line.trim());
+                const newLines = newContent.split(/\r?\n/).filter(line => line.trim());
                 
                 // Update last read position
                 state.lastReadPositions.set(fileName, fullContent.length);
@@ -3534,7 +4023,7 @@ function appendLinesToViewer(fileData, newLines, startLineIdx) {
     newLines.forEach((line, idx) => {
         const lineNum = startLineIdx + idx + 1;
         const level = detectLogLevel(line);
-        const levelClass = level !== 'default' ? level : '';
+        const levelClass = (!fileData.skipErrorRendering && level !== 'default') ? level : '';
         
         const displayLine = state.highlightRules.length > 0 
             ? applyHighlightRules(line, fileData.name)
@@ -3581,7 +4070,7 @@ function appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx) 
     newLines.forEach((line, idx) => {
         const lineNum = startLineIdx + idx + 1;
         const level = detectLogLevel(line);
-        const levelClass = level !== 'default' ? level : '';
+        const levelClass = (!fileData.skipErrorRendering && level !== 'default') ? level : '';
         const timestamp = extractTimestamp(line);
         
         const displayLine = state.highlightRules.length > 0 
@@ -3727,21 +4216,61 @@ function updateIssuesUI() {
         performance: state.issues.filter(i => i.category === 'performance').length
     };
     
-    document.getElementById('countAll').textContent = counts.all;
-    document.getElementById('countCritical').textContent = counts.critical;
-    document.getElementById('countError').textContent = counts.error;
-    document.getElementById('countWarning').textContent = counts.warning;
-    document.getElementById('countPerformance').textContent = counts.performance;
+    // Check if current file is stitched and skipErrorRendering is true
+    const currentFile = state.files && state.currentFileIndex >= 0 ? state.files[state.currentFileIndex] : null;
     
-    // Update badges
-    document.getElementById('issuesBadge').textContent = counts.all;
-    document.getElementById('statIssues').textContent = counts.all;
+    if (currentFile && currentFile.isStitched && currentFile.skipErrorRendering) {
+        // Zero out counts for the UI when viewing a stitched file without issue rendering
+        document.getElementById('countAll').textContent = '0';
+        document.getElementById('countCritical').textContent = '0';
+        document.getElementById('countError').textContent = '0';
+        document.getElementById('countWarning').textContent = '0';
+        document.getElementById('countPerformance').textContent = '0';
+        
+        document.getElementById('issuesBadge').textContent = '0';
+        document.getElementById('statIssues').textContent = '0';
+    } else {
+        // Normal behavior
+        document.getElementById('countAll').textContent = counts.all;
+        document.getElementById('countCritical').textContent = counts.critical;
+        document.getElementById('countError').textContent = counts.error;
+        document.getElementById('countWarning').textContent = counts.warning;
+        document.getElementById('countPerformance').textContent = counts.performance;
+        
+        // Update badges
+        document.getElementById('issuesBadge').textContent = counts.all;
+        document.getElementById('statIssues').textContent = counts.all;
+    }
     
     renderIssues();
 }
 
 function renderIssues() {
     const container = document.getElementById('issuesList');
+    
+    // Check if we are viewing a stitched file with skipErrorRendering enabled
+    const currentFile = state.files[state.currentFileIndex];
+    if (currentFile && currentFile.isStitched && currentFile.skipErrorRendering) {
+        // Only show message, don't show the hundreds of issues from original files to avoid confusion
+        container.innerHTML = `
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                </svg>
+                <p>Issue Highlighting Disabled</p>
+                <span>You chose not to render issues for this stitched file to improve scrolling performance.</span>
+            </div>
+        `;
+        
+        // Also zero out the numbers temporarily for this view
+        document.getElementById('countAll').textContent = '0';
+        document.getElementById('countCritical').textContent = '0';
+        document.getElementById('countError').textContent = '0';
+        document.getElementById('countWarning').textContent = '0';
+        document.getElementById('countPerformance').textContent = '0';
+        return;
+    }
     
     let filtered = state.issues;
     if (state.activeCategory !== 'all') {
@@ -4282,35 +4811,89 @@ function populateStitchFileList() {
     }
     
     // Filter out config files and already stitched files
-    const logFiles = state.files.filter(f => !f.isConfig && !f.isStitched);
+    let logFiles = state.files.filter(f => !f.isConfig && !f.isStitched);
     
     if (logFiles.length === 0) {
         container.innerHTML = '<p class="empty-message">No log files available for stitching. Config and stitched files cannot be stitched.</p>';
         return;
     }
     
-    // Group files by type (Business Engine, Comms Engine, etc.)
-    const grouped = groupFilesByType(logFiles);
+    // Sort files logically: base name first, then by the extension/number/date
+    logFiles.sort((a, b) => {
+        return a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'});
+    });
     
     let html = '';
-    for (const [type, files] of Object.entries(grouped)) {
+    logFiles.forEach((file, index) => {
         html += `
-            <div class="stitch-group">
-                <h4>${type}</h4>
-                ${files.map(file => `
-                    <label class="stitch-file-item">
-                        <input type="checkbox" 
-                               value="${escapeHtml(file.name)}" 
-                               onchange="updateStitchSelection()">
-                        <span class="file-name">${escapeHtml(getDisplayFileName(file))}</span>
-                        <span class="file-info">${file.lines.length.toLocaleString()} lines | ${formatFileSize(file.size)}</span>
-                    </label>
-                `).join('')}
+            <div class="stitch-file-item sortable-item" data-filename="${escapeHtml(file.name)}" style="display: flex; align-items: center; padding: 0.5rem; border: 1px solid var(--border-color); margin-bottom: 0.25rem; border-radius: 4px; background: var(--bg-secondary);">
+                <div class="stitch-order-controls" style="display: flex; flex-direction: column; margin-right: 8px;">
+                    <button class="btn-icon btn-small" onclick="moveStitchItem(this, -1)" title="Move Up" style="padding: 2px;">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                    </button>
+                    <button class="btn-icon btn-small" onclick="moveStitchItem(this, 1)" title="Move Down" style="padding: 2px;">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </button>
+                </div>
+                <div class="stitch-order-badge" style="background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin-right: 8px; width: 24px; text-align: center;">
+                    ${index + 1}
+                </div>
+                <label style="display: flex; align-items: center; flex: 1; cursor: pointer; margin: 0;">
+                    <input type="checkbox" value="${escapeHtml(file.name)}" onchange="updateStitchSelection()" style="margin-right: 8px;">
+                    <span class="file-name" style="flex: 1;">${escapeHtml(getDisplayFileName(file))}</span>
+                    <span class="file-info" style="font-size: 0.8rem; color: var(--text-secondary);">
+                        ${file.lines.length.toLocaleString()} lines | ${formatFileSize(file.size)}
+                    </span>
+                </label>
             </div>
         `;
-    }
+    });
     
     container.innerHTML = html;
+    updateStitchOrderDisabledStates();
+}
+
+function moveStitchItem(btn, direction) {
+    const item = btn.closest('.sortable-item');
+    const container = item.parentElement;
+    
+    if (direction === -1 && item.previousElementSibling) {
+        container.insertBefore(item, item.previousElementSibling);
+    } else if (direction === 1 && item.nextElementSibling) {
+        container.insertBefore(item.nextElementSibling, item);
+    }
+    
+    // Animate to show it moved
+    item.style.background = 'var(--accent-primary-alpha)';
+    setTimeout(() => item.style.background = 'var(--bg-secondary)', 300);
+    
+    updateStitchOrderBadges();
+    updateStitchOrderDisabledStates();
+    updateStitchSelection();
+}
+
+function updateStitchOrderDisabledStates() {
+    const items = document.querySelectorAll('#stitchFileList .sortable-item');
+    items.forEach((item, index) => {
+        const upBtn = item.querySelectorAll('.stitch-order-controls button')[0];
+        const downBtn = item.querySelectorAll('.stitch-order-controls button')[1];
+        
+        upBtn.disabled = index === 0;
+        upBtn.style.opacity = index === 0 ? '0.3' : '1';
+        upBtn.style.cursor = index === 0 ? 'not-allowed' : 'pointer';
+        
+        downBtn.disabled = index === items.length - 1;
+        downBtn.style.opacity = index === items.length - 1 ? '0.3' : '1';
+        downBtn.style.cursor = index === items.length - 1 ? 'not-allowed' : 'pointer';
+    });
+}
+
+function updateStitchOrderBadges() {
+    const items = document.querySelectorAll('#stitchFileList .sortable-item');
+    items.forEach((item, index) => {
+        const badge = item.querySelector('.stitch-order-badge');
+        if (badge) badge.textContent = index + 1;
+    });
 }
 
 function groupFilesByType(files) {
@@ -4345,10 +4928,20 @@ function groupFilesByType(files) {
 }
 
 function updateStitchSelection() {
-    const checkboxes = document.querySelectorAll('#stitchFileList input[type="checkbox"]');
-    state.stitchedFiles = Array.from(checkboxes)
-        .filter(cb => cb.checked)
-        .map(cb => cb.value);
+    const items = document.querySelectorAll('#stitchFileList .sortable-item');
+    state.stitchedFiles = [];
+    items.forEach(item => {
+        const cb = item.querySelector('input[type="checkbox"]');
+        if (cb && cb.checked) {
+            state.stitchedFiles.push(cb.value);
+        }
+    });
+    
+    // Check direction
+    const direction = document.getElementById('stitchDirection')?.value || 'asc';
+    if (direction === 'desc') {
+        state.stitchedFiles.reverse();
+    }
     
     const btn = document.getElementById('performStitchBtn');
     const exportBtn = document.getElementById('exportStitchedBtn');
@@ -4392,145 +4985,119 @@ function performStitch() {
             hideStitchingLoader();
             showToast(`Stitch failed: ${error.message}`, 'error');
         }
-    }, 50);
+    }, 100);
 }
 
 async function performStitchAsync() {
     // Gather all log entries from selected files
     const allEntries = [];
     let totalLines = 0;
-    let entriesWithTimestamps = 0;
-    let entriesWithoutTimestamps = 0;
     const totalFiles = state.stitchedFiles.length;
     let processedFiles = 0;
     
+    // The files are already sorted by the user in the UI
+    const sortedFiles = state.stitchedFiles.slice();
+    
     // Process files in chunks to keep UI responsive
-    for (const fileName of state.stitchedFiles) {
+    for (const fileName of sortedFiles) {
         const fileData = state.files.find(f => f.name === fileName);
         if (!fileData) continue;
         
         const parsed = state.parsedLogs.get(fileName);
-        if (!parsed) continue;
+        
+        // Ensure parsed log entries actually have data! Sometimes caching goes wrong.
+        if (!parsed || (parsed.length === 0 && fileData.lines && fileData.lines.length > 0)) {
+            // Re-parse just in case the cache got cleared
+            parseLogFile(fileData);
+            // Must fetch it freshly after parsing!
+        }
+        
+        // Fetch it one more time just to be completely sure
+        const freshParsed = state.parsedLogs.get(fileName);
+        if (!freshParsed || freshParsed.length === 0) continue;
         
         // Update progress
         processedFiles++;
         updateStitchingProgress(processedFiles, totalFiles, `Processing ${fileName}...`);
+        // Force UI update
+        await new Promise(resolve => setTimeout(resolve, 10));
         
-        let lastSortableTime = null;
+        // Inject separator line before each file
+        if (allEntries.length > 0) {
+            allEntries.push({
+                isSeparator: true,
+                raw: `--- STITCH BREAK: Switching to ${fileName} ---`,
+                lineNumber: -1, // Special marker
+                sourceFile: 'SEPARATOR',
+                timestamp: null // explicitly mark as having no time so it inherits properly later
+            });
+        }
         
         // Process entries in chunks
-        const chunkSize = 500;
-        for (let i = 0; i < parsed.length; i += chunkSize) {
-            const chunk = parsed.slice(i, Math.min(i + chunkSize, parsed.length));
+        const chunkSize = 10000;
+        for (let i = 0; i < freshParsed.length; i += chunkSize) {
+            const chunk = freshParsed.slice(i, Math.min(i + chunkSize, freshParsed.length));
             
             chunk.forEach(entry => {
                 totalLines++;
-                let sortableTime = null;
-                
-                if (entry.timestamp) {
-                    sortableTime = parseTimestampForStitch(entry.timestamp);
-                }
-                
-                if (sortableTime !== null) {
-                    lastSortableTime = sortableTime;
-                    entriesWithTimestamps++;
-                } else if (lastSortableTime !== null) {
-                    // Inherit timestamp from previous line in the same file
-                    // This keeps stack traces and multiline messages together with their parent!
-                    sortableTime = lastSortableTime;
-                    entriesWithTimestamps++;
-                } else {
-                    entriesWithoutTimestamps++;
-                }
-                
-                allEntries.push({
+                // Create a fresh clone of the entry to ensure we don't accidentally mutate 
+                // the original parsed cache in a way that breaks it for single-file viewing
+                const newEntry = {
                     ...entry,
                     sourceFile: fileName,
-                    sortableTimestamp: sortableTime,
                     originalIndex: entry.lineNumber
-                });
+                };
+                
+                // Give the stitched file a continuous global line number
+                newEntry.lineNumber = allEntries.length + 1;
+                
+                delete newEntry.cachedTime; // Force recalculation so stack traces inherit timestamps across file boundaries!
+                allEntries.push(newEntry);
             });
             
             // Yield to browser every chunk
-            if (i + chunkSize < parsed.length) {
+            if (i + chunkSize < freshParsed.length) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
         }
     }
     
-    // Update progress for sorting
-    updateStitchingProgress(100, 100, 'Sorting entries by timestamp...');
-    await new Promise(resolve => setTimeout(resolve, 50));
-    
-    // Sort by timestamp - entries without timestamps go to the end
-    allEntries.sort((a, b) => {
-        // If neither has a timestamp, keep original relative order if they are from the same file
-        if (a.sortableTimestamp === null && b.sortableTimestamp === null) {
-            if (a.sourceFile === b.sourceFile) {
-                return a.originalIndex - b.originalIndex;
-            }
-            return a.sourceFile.localeCompare(b.sourceFile);
-        }
-        
-        if (a.sortableTimestamp === null) return 1;
-        if (b.sortableTimestamp === null) return -1;
-        
-        // If timestamps are different, sort by timestamp
-        if (a.sortableTimestamp !== b.sortableTimestamp) {
-            return a.sortableTimestamp - b.sortableTimestamp;
-        }
-        
-        // If timestamps are exactly the same, try to keep lines from the same file in their original order
-        if (a.sourceFile === b.sourceFile) {
-            return a.originalIndex - b.originalIndex;
-        }
-        
-        // If different files have exact same timestamp, group by filename
-        return a.sourceFile.localeCompare(b.sourceFile);
-    });
-    
-    // Inject separator lines where the source file changes
-    const finalEntries = [];
-    let lastSourceFile = null;
-    
-    for (let i = 0; i < allEntries.length; i++) {
-        const entry = allEntries[i];
-        if (lastSourceFile !== null && entry.sourceFile !== lastSourceFile) {
-            finalEntries.push({
-                isSeparator: true,
-                raw: `--- STITCH BREAK: Switching from ${lastSourceFile} to ${entry.sourceFile} ---`,
-                lineNumber: -1, // Special marker
-                sourceFile: 'SEPARATOR'
-            });
-        }
-        finalEntries.push(entry);
-        lastSourceFile = entry.sourceFile;
-    }
+    const finalEntries = allEntries;
     
     // Create a virtual "stitched" file
     const now = new Date();
     const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const timeStr = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
     const stitchedFileName = `Stitched_${state.stitchedFiles.length}files_${dateStr}_${timeStr}.log`;
-    const stitchedContent = finalEntries.map(entry => entry.raw).join('\n');
     
+    // Check if user wants to skip error rendering for performance
+    const renderErrorsCheckbox = document.getElementById('renderStitchErrors');
+    const skipErrorRendering = renderErrorsCheckbox ? !renderErrorsCheckbox.checked : false;
+    
+    updateStitchingProgress(100, 100, 'Finalizing stitched log...');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Defer array map and join to keep UI responsive
+    // Instead of doing it all at once which blocks the thread, we will just keep the entries
+    // For the content string (needed for export), we will build it on-demand during export to save massive memory and time.
     state.stitchedData = {
         name: stitchedFileName,
-        size: stitchedContent.length,
+        size: finalEntries.length * 100, // Estimate size
         lastModified: new Date(),
-        content: stitchedContent,
-        lines: finalEntries.map(e => e.raw),
+        content: "Content generated on export", 
+        lines: finalEntries, // We use entries instead of raw strings to save memory
         isStitched: true,
-        sourceFiles: state.stitchedFiles.slice(), // Copy array
-        entries: finalEntries
+        sourceFiles: sortedFiles, // Keep the sorted array
+        entries: finalEntries,
+        isConfig: false,
+        skipErrorRendering: skipErrorRendering
     };
     
     // Parse the stitched data
     state.parsedLogs.set(stitchedFileName, finalEntries);
     
-    // Update progress for issue detection
-    updateStitchingProgress(100, 100, 'Detecting issues...');
-    await new Promise(resolve => setTimeout(resolve, 50));
+    // Skip issue detection for stitched logs to save massive amounts of time.
+    // Issues are already detected on the individual files anyway!
     
     // Add to files list if not already there, or replace if it exists
     const existingIndex = state.files.findIndex(f => f.name === stitchedFileName || f.isStitched);
@@ -4540,15 +5107,13 @@ async function performStitchAsync() {
         state.files.push(state.stitchedData);
     }
     
-    // Also detect issues in stitched log
-    detectIssues(state.stitchedData);
-    
     // Select and display stitched file BEFORE updating dropdown
     state.currentFileIndex = state.files.findIndex(f => f.name === stitchedFileName);
     
     // Update UI
     updateUI();
     updateFileDropdown();
+    updateIssuesUI();
     
     displayStitchedLog(state.stitchedData);
     
@@ -4561,11 +5126,7 @@ async function performStitchAsync() {
     // Close stitch panel
     toggleStitchMode();
     
-    const successMsg = entriesWithoutTimestamps > 0 
-        ? `✓ Stitched ${state.stitchedFiles.length} files (${entriesWithTimestamps.toLocaleString()} sorted by timestamp, ${entriesWithoutTimestamps.toLocaleString()} without timestamps at end)`
-        : `✓ Successfully stitched ${state.stitchedFiles.length} files with ${finalEntries.length.toLocaleString()} log entries`;
-    
-    showToast(successMsg, 'success');
+    showToast(`✓ Successfully stitched ${state.stitchedFiles.length} files with ${finalEntries.length.toLocaleString()} log entries`, 'success');
 }
 
 function showStitchingLoader(fileCount) {
@@ -4707,6 +5268,171 @@ function toggleStitchBreaksVisibility() {
     }
 }
 
+function jumpToNextStitchBreak() {
+    if (state.virtualScroll && state.virtualScroll.active) {
+        const vs = state.virtualScroll;
+        
+        // Find all stitch breaks in currently filtered lines
+        const breakIndices = [];
+        for (let i = 0; i < vs.filteredLines.length; i++) {
+            if (vs.filteredLines[i].isSeparator) {
+                breakIndices.push(i);
+            }
+        }
+        
+        if (breakIndices.length === 0) {
+            showToast('No stitch breaks found', 'info');
+            return;
+        }
+
+        // Calculate current center index
+        const centerIndex = Math.floor((vs.contentEl.scrollTop + (vs.contentEl.clientHeight / 2)) / vs.lineHeight);
+        
+        // Find the first break that is strictly BELOW our current center plus a tiny buffer
+        let targetIndex = -1;
+        for (const idx of breakIndices) {
+            if (idx > centerIndex + 2) {
+                targetIndex = idx;
+                break;
+            }
+        }
+        
+        if (targetIndex !== -1) {
+            // Calculate pixel position to center it
+            const scrollPos = targetIndex * vs.lineHeight - (vs.contentEl.clientHeight / 2);
+            
+            // Instant scroll to avoid browser smooth-scroll bugs over massive pixel distances
+            vs.contentEl.scrollTop = Math.max(0, scrollPos);
+            
+            // Explicitly force a viewport update immediately so the DOM node exists
+            updateViewerViewport();
+            
+            // Try to highlight it after virtual scroll has a moment to render the new chunk
+            setTimeout(() => {
+                const el = vs.contentEl.querySelector(`.log-line.stitched-separator[data-vindex="${targetIndex}"]`);
+                if (el) {
+                    el.classList.add('highlight');
+                    setTimeout(() => el.classList.remove('highlight'), 2000);
+                }
+            }, 50); 
+            return;
+        } else {
+            showToast('Already at the last stitch break', 'info');
+            return;
+        }
+    }
+
+    const breaks = Array.from(document.querySelectorAll('.log-line.stitched-separator'));
+    if (!breaks.length) {
+        showToast('No stitch breaks found in current view', 'info');
+        return;
+    }
+    
+    const container = document.getElementById('logContainer');
+    if (!container) return;
+    
+    const containerTop = container.getBoundingClientRect().top;
+    
+    let target = null;
+    for (const br of breaks) {
+        const rect = br.getBoundingClientRect();
+        if (rect.top > containerTop + 20) {
+            target = br;
+            break;
+        }
+    }
+    
+    if (target) {
+        target.scrollIntoView({ behavior: 'auto', block: 'center' });
+        target.classList.add('highlight');
+        setTimeout(() => target.classList.remove('highlight'), 2000);
+    } else {
+        showToast('Already at the last stitch break', 'info');
+    }
+}
+
+function jumpToPrevStitchBreak() {
+    if (state.virtualScroll && state.virtualScroll.active) {
+        const vs = state.virtualScroll;
+        
+        // Find all stitch breaks in currently filtered lines
+        const breakIndices = [];
+        for (let i = 0; i < vs.filteredLines.length; i++) {
+            if (vs.filteredLines[i].isSeparator) {
+                breakIndices.push(i);
+            }
+        }
+        
+        if (breakIndices.length === 0) {
+            showToast('No stitch breaks found', 'info');
+            return;
+        }
+
+        // Calculate current center index
+        const centerIndex = Math.floor((vs.contentEl.scrollTop + (vs.contentEl.clientHeight / 2)) / vs.lineHeight);
+        
+        // Find the first break that is strictly ABOVE our current center minus a tiny buffer
+        let targetIndex = -1;
+        for (let i = breakIndices.length - 1; i >= 0; i--) {
+            if (breakIndices[i] < centerIndex - 2) {
+                targetIndex = breakIndices[i];
+                break;
+            }
+        }
+        
+        if (targetIndex !== -1) {
+            const scrollPos = targetIndex * vs.lineHeight - (vs.contentEl.clientHeight / 2);
+            
+            // Instant scroll
+            vs.contentEl.scrollTop = Math.max(0, scrollPos);
+            
+            // Explicitly force a viewport update
+            updateViewerViewport();
+            
+            // Try to highlight it after rendering
+            setTimeout(() => {
+                const el = vs.contentEl.querySelector(`.log-line.stitched-separator[data-vindex="${targetIndex}"]`);
+                if (el) {
+                    el.classList.add('highlight');
+                    setTimeout(() => el.classList.remove('highlight'), 2000);
+                }
+            }, 50);
+            return;
+        } else {
+            showToast('Already at the first stitch break', 'info');
+            return;
+        }
+    }
+
+    const breaks = Array.from(document.querySelectorAll('.log-line.stitched-separator'));
+    if (!breaks.length) {
+        showToast('No stitch breaks found in current view', 'info');
+        return;
+    }
+    
+    const container = document.getElementById('logContainer');
+    if (!container) return;
+    
+    const containerTop = container.getBoundingClientRect().top;
+    
+    let target = null;
+    for (let i = breaks.length - 1; i >= 0; i--) {
+        const rect = breaks[i].getBoundingClientRect();
+        if (rect.top < containerTop - 20) {
+            target = breaks[i];
+            break;
+        }
+    }
+    
+    if (target) {
+        target.scrollIntoView({ behavior: 'auto', block: 'center' });
+        target.classList.add('highlight');
+        setTimeout(() => target.classList.remove('highlight'), 2000);
+    } else {
+        showToast('Already at the first stitch break', 'info');
+    }
+}
+
 function parseTimestampForStitch(timestampStr) {
     // Reuse the existing parseTimestamp function if available, otherwise implement
     if (typeof parseTimestamp === 'function') {
@@ -4757,6 +5483,9 @@ function displayStitchedLog(fileData) {
         toggleContainer.style.display = 'flex';
     }
     
+    // Update date filter limits based on the stitched log entries
+    updateDateFilterLimits(fileData.entries);
+    
     let filtered = filterLines(fileData.entries);
     
     // Apply date sorting if enabled
@@ -4777,136 +5506,13 @@ function displayStitchedLog(fileData) {
         `;
         
         // Use setTimeout to allow UI to update before rendering (reduced to 50ms)
-        setTimeout(() => renderStitchedLogOptimized(fileData, filtered, gutter, content), 50);
-    } else {
-        renderStitchedLogOptimized(fileData, filtered, gutter, content);
-    }
-}
-
-function renderStitchedLogOptimized(fileData, filtered, gutter, content) {
-    // Build gutter
-    if (state.settings.showLineNumbers) {
-        // Use DocumentFragment for better performance
-        const gutterFragment = document.createDocumentFragment();
-        const gutterDiv = document.createElement('div');
-        
-        // Batch render gutter lines
-        const gutterHTML = filtered.map((entry, idx) => {
-            if (entry.isSeparator) {
-                return `<div class="line-number" data-line="-1">-</div>`;
-            }
-            return `<div class="line-number" data-line="${idx + 1}">${idx + 1}</div>`;
-        }).join('');
-        
-        gutterDiv.innerHTML = gutterHTML;
-        while (gutterDiv.firstChild) {
-            gutterFragment.appendChild(gutterDiv.firstChild);
-        }
-        
-        gutter.innerHTML = '';
-        gutter.appendChild(gutterFragment);
-        gutter.style.display = 'block';
-    } else {
-        gutter.style.display = 'none';
-    }
-    
-    // Build content with source file indicators using DocumentFragment
-    const contentFragment = document.createDocumentFragment();
-    const contentDiv = document.createElement('div');
-    
-    // Batch size for rendering (smaller batches = more responsive)
-    const BATCH_SIZE = 2000;
-    
-    if (filtered.length > BATCH_SIZE) {
-        // Render in batches for very large files
-        renderInBatches(filtered, contentDiv, fileData, 0, BATCH_SIZE, () => {
-            while (contentDiv.firstChild) {
-                contentFragment.appendChild(contentDiv.firstChild);
-            }
-            content.innerHTML = '';
-            content.appendChild(contentFragment);
-            
-            // Update stats and apply styling after rendering
+        setTimeout(() => {
+            renderLogOptimized(fileData, filtered, gutter, content);
             finalizeStitchedLogDisplay(fileData, filtered, content, gutter);
-        });
+        }, 50);
     } else {
-        // Render all at once for smaller files
-        const contentHTML = filtered.map((entry, idx) => {
-            if (entry.isSeparator) {
-                return `<div class="log-line stitched-separator" data-line="-1">${escapeHtml(entry.raw)}</div>`;
-            }
-            
-            const levelClass = entry.level !== 'default' ? entry.level : '';
-            let highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
-                ? highlightSearchTerms(escapeHtml(entry.raw))
-                : escapeHtml(entry.raw);
-                
-            // Also apply standard highlight rules to stitched lines
-            if (state.highlightRules && state.highlightRules.length > 0) {
-                highlightedLine = applyHighlightRules(entry.raw, fileData.name);
-            }
-            
-            const fileColor = getFileColor(entry.sourceFile);
-            const sourceIndicator = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
-            
-            return `<div class="log-line stitched-line ${levelClass}" data-line="${idx + 1}" data-source="${escapeHtml(entry.sourceFile)}">
-                ${sourceIndicator}${highlightedLine || '&nbsp;'}
-            </div>`;
-        }).join('');
-        
-        contentDiv.innerHTML = contentHTML;
-        while (contentDiv.firstChild) {
-            contentFragment.appendChild(contentDiv.firstChild);
-        }
-        
-        content.innerHTML = '';
-        content.appendChild(contentFragment);
-        
+        renderLogOptimized(fileData, filtered, gutter, content);
         finalizeStitchedLogDisplay(fileData, filtered, content, gutter);
-    }
-}
-
-function renderInBatches(filtered, contentDiv, fileData, startIdx, batchSize, callback) {
-    const endIdx = Math.min(startIdx + batchSize, filtered.length);
-    
-    // Render this batch - use array join for better performance
-    const batchHTML = [];
-    for (let i = startIdx; i < endIdx; i++) {
-        const entry = filtered[i];
-        
-        if (entry.isSeparator) {
-            batchHTML.push(`<div class="log-line stitched-separator" data-line="-1">${escapeHtml(entry.raw)}</div>`);
-            continue;
-        }
-        
-        const levelClass = entry.level !== 'default' ? entry.level : '';
-        let highlightedLine = state.settings.highlightSearch && state.searchMatches && state.searchMatches.length > 0 
-            ? highlightSearchTerms(escapeHtml(entry.raw))
-            : escapeHtml(entry.raw);
-            
-        // Also apply standard highlight rules to stitched lines
-        if (state.highlightRules && state.highlightRules.length > 0) {
-            highlightedLine = applyHighlightRules(entry.raw, fileData.name);
-        }
-        
-        const fileColor = getFileColor(entry.sourceFile);
-        const sourceIndicator = `<span class="source-indicator" style="background: ${fileColor};" title="${escapeHtml(entry.sourceFile)}"></span>`;
-        
-        batchHTML.push(`<div class="log-line stitched-line ${levelClass}" data-line="${i + 1}" data-source="${escapeHtml(entry.sourceFile)}">${sourceIndicator}${highlightedLine || '&nbsp;'}</div>`);
-    }
-    
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = batchHTML.join('');
-    while (tempDiv.firstChild) {
-        contentDiv.appendChild(tempDiv.firstChild);
-    }
-    
-    // Continue with next batch or finish
-    if (endIdx < filtered.length) {
-        // Reduced timeout for faster rendering (1ms instead of 10ms)
-        setTimeout(() => renderInBatches(filtered, contentDiv, fileData, endIdx, batchSize, callback), 1);
-    } else {
-        callback();
     }
 }
 
@@ -4954,7 +5560,7 @@ function displayStitchLegend(sourceFiles) {
 }
 
 function getFileColor(fileName) {
-    // Generate consistent colors for each file using a simple hash
+    // Generate consistent colors for each file
     const colors = [
         '#FF6B35', // Orange (Traka primary)
         '#4ECDC4', // Teal
@@ -4968,7 +5574,16 @@ function getFileColor(fileName) {
         '#FAB1A0'  // Coral
     ];
     
-    // Simple string hash
+    // Try to get the exact index from the currently viewed stitched file for perfect uniqueness
+    const currentFile = state.files && state.currentFileIndex >= 0 ? state.files[state.currentFileIndex] : null;
+    if (currentFile && currentFile.isStitched && currentFile.sourceFiles) {
+        const index = currentFile.sourceFiles.indexOf(fileName);
+        if (index >= 0) {
+            return colors[index % colors.length];
+        }
+    }
+    
+    // Simple string hash fallback
     let hash = 0;
     for (let i = 0; i < fileName.length; i++) {
         hash = fileName.charCodeAt(i) + ((hash << 5) - hash);
@@ -4985,17 +5600,59 @@ function exportStitchedLog() {
     }
     
     try {
-        const blob = new Blob([state.stitchedData.content], { type: 'text/plain;charset=utf-8' });
+        // Build the text content carefully: ensure separators have clear newlines
+        // If stitch breaks are hidden, we should strip the separator lines entirely from the export.
+        const includeBreaks = !state.hideStitchBreaks;
+        let exportContent = '';
+        
+        if (includeBreaks) {
+            // Generate full content with separators on demand
+            const lines = [];
+            for (const entry of state.stitchedData.entries) {
+                lines.push(entry.raw);
+            }
+            exportContent = lines.join('\n');
+        } else {
+            // Reconstruct content without the separator headers
+            const lines = [];
+            for (const entry of state.stitchedData.entries) {
+                if (entry.isSeparator || entry.type === 'separator') continue;
+                lines.push(entry.raw);
+            }
+            exportContent = lines.join('\n');
+        }
+        
+        const blob = new Blob([exportContent], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = state.stitchedData.name;
+        
+        // Generate a smart filename based on the engine type
+        let baseName = 'Stitched_Log';
+        if (state.stitchedData.entries && state.stitchedData.entries.length > 0) {
+            const firstFileIndex = state.stitchedData.entries.find(e => e.type !== 'separator')?.fileIndex;
+            if (firstFileIndex !== undefined && state.files[firstFileIndex]) {
+                const f = state.files[firstFileIndex];
+                if (f.engineType) {
+                    baseName = `Stitched_${f.engineType.replace(/\s+/g, '_')}`;
+                } else {
+                    const cleanName = f.originalName.replace(/\.(txt|log|cfg).*$/i, '');
+                    baseName = `Stitched_${cleanName}`;
+                }
+            }
+        }
+        
+        // Add current timestamp to filename
+        const now = new Date();
+        const dateStr = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}_${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
+        
+        a.download = `${baseName}_${dateStr}.log`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         
-        showToast(`Exported ${state.stitchedData.name}`, 'success');
+        showToast(`Exported ${a.download}`, 'success');
     } catch (e) {
         showToast(`Failed to export: ${e.message}`, 'error');
     }
@@ -5779,24 +6436,90 @@ function sortLogLinesByDate(lines) {
         return lines;
     }
     
+    // Pre-calculate timestamps to avoid million of Date object creations during sort
+    // IMPORTANT: To prevent stack traces (lines without timestamps) from being ripped away 
+    // from their parent log lines, they must inherit the timestamp of the line above them!
+    
+    // To handle multiple files properly, we shouldn't leak the lastKnownTime across stitch boundaries.
+    // However, a stitch break itself needs a time so it sorts correctly.
+    let lastKnownTime = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].cachedTime === undefined || lines[i].cachedTime === null) {
+            let time = 0;
+            if (lines[i].timestamp) {
+                time = new Date(lines[i].timestamp).getTime();
+                if (!isNaN(time) && time > 0) {
+                    lastKnownTime = time;
+                } else {
+                    time = lastKnownTime; // Fallback to previous if parsing fails
+                }
+            } else {
+                // If it's a separator, we want it to sit EXACTLY where it was placed natively
+                // in the array by inheriting the last timestamp seen.
+                // However, for the very first file, lastKnownTime might be 0. We don't want it to
+                // permanently get stuck at 0.
+                time = lastKnownTime;
+            }
+            lines[i].cachedTime = time;
+        } else {
+            // Update lastKnownTime from cachedTime if it's valid
+            if (lines[i].cachedTime > 0) {
+                lastKnownTime = lines[i].cachedTime;
+            }
+        }
+        
+        // Add original index to preserve stable sorting for lines with the exact same timestamp
+        lines[i]._stableIndex = i;
+    }
+    
+    // Now that all lines have inherited times, do a quick BACKWARD pass to fix the top of the file!
+    // If the first file started with stack traces or a stitch break (so they got cachedTime = 0),
+    // they need to inherit the first VALID time found further down the file, otherwise they 
+    // sink to the very bottom of the logs!
+    let firstValidTime = 0;
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].cachedTime > 0) {
+            firstValidTime = lines[i].cachedTime;
+            break;
+        }
+    }
+    
+    // Set ANY line that has a 0 cachedTime to the first valid time so it doesn't sink 
+    // to the very bottom (or top) inappropriately when sorting!
+    if (firstValidTime > 0) {
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].cachedTime === 0 || !lines[i].cachedTime) {
+                lines[i].cachedTime = firstValidTime;
+            }
+        }
+    }
+    
     // Create a copy to avoid mutating original
     const sorted = [...lines];
     
-    // Sort by timestamp
+    // Sort by cached timestamp
     sorted.sort((a, b) => {
-        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        // ALWAYS keep stitch breaks exactly where they belong relative to their neighboring files
+        // We do this by ensuring we fallback to stable index if times are completely equal.
+        const timeA = a.cachedTime || 0;
+        const timeB = b.cachedTime || 0;
         
-        // Handle entries without timestamps (put them at the end)
-        if (!timeA && !timeB) return 0;
-        if (!timeA) return 1;
-        if (!timeB) return -1;
+        if (!timeA && !timeB) return a._stableIndex - b._stableIndex;
+        if (!timeA) return state.dateSortOrder === 'asc' ? 1 : 1;
+        if (!timeB) return state.dateSortOrder === 'asc' ? -1 : -1;
         
-        // Sort based on order
-        if (state.dateSortOrder === 'asc') {
-            return timeA - timeB; // Oldest first
+        if (timeA !== timeB) {
+            // Sort based on order
+            if (state.dateSortOrder === 'asc') {
+                return timeA - timeB; // Oldest first
+            } else {
+                return timeB - timeA; // Newest first
+            }
         } else {
-            return timeB - timeA; // Newest first
+            // If timestamps are exactly the same (e.g. stack trace lines belonging to the same entry,
+            // or stitch breaks), ALWAYS preserve their original relative vertical order to keep the timeline logical!
+            return a._stableIndex - b._stableIndex;
         }
     });
     
@@ -6069,6 +6792,105 @@ function restoreAllPanels() {
             btn.title = 'Maximize this panel';
         }
     });
+}
+
+// ============================================
+// Per-Panel Popout (New Window)
+// ============================================
+
+/**
+ * Pops out a compare panel into its own detached window.
+ */
+async function popOutPanel(panelIndex) {
+    if (!isElectron) {
+        showToast('Pop-out feature is only available in Desktop Edition', 'warning');
+        return;
+    }
+    
+    // Don't allow popping out all panels
+    const visibleCount = state.files.length - state.minimizedPanels.size - state.poppedOutPanels.size;
+    if (visibleCount <= 1) {
+        showToast('Cannot pop out the last visible panel', 'warning');
+        return;
+    }
+    
+    const file = state.files[panelIndex];
+    if (!file) return;
+    
+    // Create a lightweight copy of the file to prevent IPC freezing on huge strings
+    const lightweightFile = {
+        name: file.name,
+        originalName: file.originalName,
+        path: file.path || (file.fileHandle && file.fileHandle.path) || undefined,
+        size: file.size,
+        engineType: file.engineType,
+        isConfig: file.isConfig,
+        lastModified: file.lastModified
+    };
+    
+    // Fallback: If absolutely no path can be found (e.g. strict web mode),
+    // we must pass the raw content string (NOT the array of lines to avoid JSON array serialization limits)
+    if (!lightweightFile.path && file.content) {
+        lightweightFile.content = file.content;
+    }
+    
+    // Gather necessary state data to pass to the popout window
+    const stateData = {
+        highlightRules: state.highlightRules,
+        timeSyncActive: state.timeSyncActive,
+        timeSyncLastTarget: state.timeSyncLastTarget,
+        timeSyncRange: state.timeSyncRange,
+        liveTailActive: state.liveTailActive,
+        currentScrollPos: state.compareVirtualScroll && state.compareVirtualScroll[panelIndex] 
+            ? state.compareVirtualScroll[panelIndex].panelContent.scrollTop 
+            : 0
+    };
+    
+    // Mark as popped out in state
+    state.poppedOutPanels.add(panelIndex);
+    
+    // Hide panel in UI immediately
+    const container = document.getElementById('compareContainer');
+    const panel = container.querySelector(`.compare-panel[data-index="${panelIndex}"]`);
+    if (panel) {
+        panel.style.display = 'none';
+        panel.classList.add('panel-popped-out');
+    }
+    
+    // Invoke main process to open window
+    try {
+        await window.electronAPI.openPopout(panelIndex, lightweightFile, stateData);
+        showToast(`Popped out "${getShortLabel(file)}"`, 'info');
+    } catch (err) {
+        showToast('Error popping out panel: ' + err.message, 'error');
+        // Revert
+        state.poppedOutPanels.delete(panelIndex);
+        if (panel) {
+            panel.style.display = 'flex';
+            panel.classList.remove('panel-popped-out');
+        }
+    }
+}
+
+/**
+ * Restore a popped out panel back to the main window grid.
+ */
+function restorePoppedOutPanel(panelIndex) {
+    if (!state.poppedOutPanels.has(panelIndex)) return;
+    
+    state.poppedOutPanels.delete(panelIndex);
+    
+    const container = document.getElementById('compareContainer');
+    const panel = container.querySelector(`.compare-panel[data-index="${panelIndex}"]`);
+    if (panel) {
+        panel.style.display = 'flex';
+        panel.classList.remove('panel-popped-out');
+        panel.classList.add('panel-restoring');
+        setTimeout(() => panel.classList.remove('panel-restoring'), 300);
+    }
+    
+    const shortLabel = getShortLabel(state.files[panelIndex]);
+    showToast(`Restored "${shortLabel}" to main window`, 'success');
 }
 
 // ============================================
@@ -6971,10 +7793,19 @@ async function clearAllLogs() {
     if (searchInput) searchInput.value = '';
     
     // Clear date filters
-    const dateFrom = document.getElementById('dateFrom');
-    const dateTo = document.getElementById('dateTo');
-    if (dateFrom) dateFrom.value = '';
-    if (dateTo) dateTo.value = '';
+    if (state.dateFromPicker) {
+        state.dateFromPicker.clear();
+    } else {
+        const dateFrom = document.getElementById('dateFrom');
+        if (dateFrom) dateFrom.value = '';
+    }
+    
+    if (state.dateToPicker) {
+        state.dateToPicker.clear();
+    } else {
+        const dateTo = document.getElementById('dateTo');
+        if (dateTo) dateTo.value = '';
+    }
     
     // Reset filter chips to 'All'
     document.querySelectorAll('.filter-chip').forEach(chip => {
@@ -7331,9 +8162,20 @@ function performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sour
             const cvs = state.compareVirtualScroll;
             if (cvs && cvs[fileIndex]) {
                 const vs = cvs[fileIndex];
+                
+                // Use getBoundingClientRect().height instead of clientHeight to calculate center.
+                // clientHeight is reduced if a horizontal scrollbar is present, which causes
+                // the "center" calculation to differ between panels, breaking perfect alignment.
+                // getBoundingClientRect().height is consistent for all panels in the flex row.
+                const panelHeight = vs.panelContent.getBoundingClientRect().height || 600;
+                
                 // Try to center the target line perfectly in the middle of the panel
-                const scrollPos = (targetLineIdx + 0.5) * vs.lineHeight - vs.panelContent.clientHeight / 2;
-                const finalScrollTop = Math.max(0, scrollPos);
+                const scrollPos = (targetLineIdx + 0.5) * vs.lineHeight - panelHeight / 2;
+                
+                // Ensure we don't try to scroll below the bottom (causes clamping and breaks sync)
+                const maxScroll = Math.max(0, vs.panelContent.scrollHeight - vs.panelContent.clientHeight);
+                const finalScrollTop = Math.min(Math.max(0, scrollPos), maxScroll);
+                
                 vs.panelContent.scrollTop = finalScrollTop;
                 
                 // Store the precise pixel offset to lock scrolling in slot-machine mode
@@ -7400,9 +8242,22 @@ function performTimeSyncInternal(timestampStr, targetTime, sourceFileIndex, sour
         }
         showToast(`No matches within ±${thresholdLabel} — panels scrolled to nearest timestamps`, 'info');
     }
+    
+    // Broadcast time sync event to popouts
+    if (isElectron) {
+        window.electronAPI.broadcastSync('time-sync', {
+            timestampStr,
+            targetTime,
+            sourceFileIndex,
+            sourceLine,
+            bounds: state.timeSyncBounds,
+            nearestLines: state.timeSyncNearestLines,
+            offsets: state.timeSyncOffsets
+        });
+    }
 }
 
-function clearTimeSyncHighlights() {
+function clearTimeSyncHighlights(isRemoteSync = false) {
     state.timeSyncLastTarget = null;
     state.timeSyncNearestLines = {};
     state.timeSyncBounds = {};
@@ -7421,6 +8276,11 @@ function clearTimeSyncHighlights() {
     const statusEl = document.getElementById('timeSyncStatus');
     if (statusEl) {
         statusEl.innerHTML = '';
+    }
+    
+    // Broadcast clear event to popouts
+    if (!isRemoteSync && isElectron) {
+        window.electronAPI.broadcastSync('time-sync-clear');
     }
 }
 

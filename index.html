@@ -3,16 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com">
     <title>Traka Log Analyzer - Desktop Edition</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
     <link rel="stylesheet" href="css/styles.css">
     <link rel="stylesheet" href="css/solution-styles.css">
     <link rel="icon" type="image/png" href="img/trakaweb-logo.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 </head>
 <body>
     <div class="app-container">
@@ -104,35 +107,15 @@
             <section class="page active" id="page-home">
                 <div class="welcome-hero">
                     <div class="hero-content">
-                        <div class="hero-branding">
-                            <div class="hero-logo" style="width: auto; background: transparent; padding: 0;">
-                                <img src="img/traka-logo-dark.svg" alt="Traka ASSA ABLOY" style="width: 200px; height: auto;">
-                            </div>
-                            <div class="hero-icons">
-                                <div class="hero-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                                        <polyline points="14 2 14 8 20 8"></polyline>
-                                        <line x1="16" y1="13" x2="8" y2="13"></line>
-                                        <line x1="16" y1="17" x2="8" y2="17"></line>
-                                    </svg>
-                                </div>
-                                <div class="hero-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <circle cx="11" cy="11" r="8"></circle>
-                                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                                    </svg>
-                                </div>
-                                <div class="hero-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                                        <line x1="12" y1="9" x2="12" y2="13"></line>
-                                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                                    </svg>
-                                </div>
+                        <div class="hero-branding" style="display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 1rem;">
+                            <img src="img/log-analyzer-icon.png" alt="Log Analyzer Icon" style="width: 104px; height: 104px; border-radius: 20px; mix-blend-mode: lighten;">
+                            <div style="display: flex; flex-direction: column; justify-content: center; align-items: flex-start; line-height: 1;">
+                                <img src="img/traka-mark.svg" alt="Traka" style="height: 56px; width: auto; margin-bottom: 8px;">
+                                <span style="font-family: 'Syne', sans-serif; font-weight: 600; font-size: 24px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; margin-left: 2px;">
+                                    Log Analyzer
+                                </span>
                             </div>
                         </div>
-                        <h1 class="hero-title">Traka Log Analyzer</h1>
                         <p class="hero-subtitle" id="heroSubtitle">Advanced log analysis tool for TrakaWEB and Traka Integration Engine. Search, filter, compare, and identify issues quickly.</p>
                         
                         <!-- Electron Auto-Discovery Section (shown only in Electron) -->
@@ -283,7 +266,7 @@
                             </svg>
                             Stitch Files
                         </button>
-                        <button class="btn btn-danger" onclick="confirmClearAllLogs()" title="Clear all loaded logs">
+                        <button class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs" style="color: var(--error-color);">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"></polyline>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -310,8 +293,15 @@
                     
                     <div class="stitch-file-selector">
                         <div class="stitch-selector-header">
-                            <label>Select files to stitch together:</label>
-                            <div class="select-all-controls">
+                            <label>Select and order files to stitch (drag to reorder):</label>
+                            <div class="select-all-controls" style="display: flex; gap: 0.5rem; align-items: center;">
+                                <div class="stitch-direction-control">
+                                    <label style="font-size: 0.8rem; margin-right: 0.25rem;">Order:</label>
+                                    <select id="stitchDirection" class="form-select" style="padding: 0.25rem; font-size: 0.8rem; width: auto;" onchange="updateStitchSelection()">
+                                        <option value="asc">Oldest First (Top to Bottom)</option>
+                                        <option value="desc">Newest First (Bottom to Top)</option>
+                                    </select>
+                                </div>
                                 <button class="btn btn-small btn-secondary" onclick="selectAllStitchFiles()">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="20 6 9 17 4 12"></polyline>
@@ -327,11 +317,20 @@
                                 </button>
                             </div>
                         </div>
-                        <div id="stitchFileList" class="stitch-file-list"></div>
+                        <div id="stitchFileList" class="stitch-file-list sortable-list"></div>
+                        <div class="stitch-options" style="margin-top: 1rem; padding: 0.5rem; background: var(--bg-tertiary); border-radius: 4px; border: 1px solid var(--border-color);">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                <input type="checkbox" id="renderStitchErrors" checked>
+                                <strong>Render error highlighting</strong>
+                            </label>
+                            <p style="font-size: 0.8rem; color: var(--text-tertiary); margin: 0.25rem 0 0 1.5rem;">
+                                Tip: Uncheck this for massive logs to make stitching and scrolling significantly faster.
+                            </p>
+                        </div>
                     </div>
                     
                     <div class="stitch-actions">
-                        <button class="btn btn-primary" onclick="performStitch()" id="performStitchBtn" disabled>
+                        <button class="btn btn-secondary" onclick="performStitch()" id="performStitchBtn" disabled>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="20 6 9 17 4 12"></polyline>
                             </svg>
@@ -412,9 +411,9 @@
                         </div>
                         
                         <div class="date-filter">
-                            <input type="datetime-local" id="dateFrom" class="date-input" title="Start Time">
+                            <input type="text" id="dateFrom" class="date-input" title="Start Time" placeholder="Start Date & Time...">
                             <span>to</span>
-                            <input type="datetime-local" id="dateTo" class="date-input" title="End Time">
+                            <input type="text" id="dateTo" class="date-input" title="End Time" placeholder="End Date & Time...">
                             <button class="btn btn-small btn-secondary" onclick="clearDateFilter()">Clear</button>
                         </div>
                     </div>
@@ -447,6 +446,19 @@
                         <div class="stitch-visibility-control" id="stitchBreakToggleContainer" style="display: none; align-items: center; gap: 0.5rem; margin-right: 1rem;">
                             <input type="checkbox" id="toggleStitchBreaks" checked onchange="toggleStitchBreaksVisibility()">
                             <label for="toggleStitchBreaks" style="font-size: 0.8125rem; color: var(--text-secondary); cursor: pointer;">Show File Breaks</label>
+                            
+                            <div class="stitch-nav-controls" style="display: flex; gap: 0.25rem; margin-left: 0.5rem;">
+                                <button class="btn-icon btn-small" id="prevStitchBreakBtn" onclick="jumpToPrevStitchBreak()" title="Jump to Previous File Break" style="padding: 0.25rem;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                                        <polyline points="18 15 12 9 6 15"></polyline>
+                                    </svg>
+                                </button>
+                                <button class="btn-icon btn-small" id="nextStitchBreakBtn" onclick="jumpToNextStitchBreak()" title="Jump to Next File Break" style="padding: 0.25rem;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         
                         <!-- Date Sort Control -->
@@ -528,15 +540,6 @@
                                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
                             </svg>
                             Highlight Rules
-                        </button>
-                        <button class="btn btn-secondary" id="compareLayoutBtn" onclick="toggleCompareLayout()" title="Toggle between grid and horizontal layout">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="compareLayoutIcon">
-                                <rect x="3" y="3" width="7" height="7"></rect>
-                                <rect x="14" y="3" width="7" height="7"></rect>
-                                <rect x="3" y="14" width="7" height="7"></rect>
-                                <rect x="14" y="14" width="7" height="7"></rect>
-                            </svg>
-                            <span id="compareLayoutLabel">Grid View</span>
                         </button>
                         <button class="btn btn-secondary" id="compareFullscreenToggle" onclick="toggleCompareFullscreen()" title="Toggle fullscreen mode">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1107,6 +1110,93 @@
                     </svg>
                     View in Log
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auto-Discover Modal -->
+    <div class="modal-overlay" id="autoDiscoverModal">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; vertical-align: middle; margin-right: 0.5rem;">
+                        <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    Auto-Discover Options
+                </h3>
+                <button class="btn-icon" onclick="closeAutoDiscoverModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="autoDiscoverStep1">
+                <p style="margin-bottom: 1rem; color: var(--text-secondary);">Choose how you want to discover Traka logs:</p>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="executeAutoDiscover('all-latest')">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">All Components (Latest Only)</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Gets the single newest log file from every Traka directory locally.</span>
+                        </div>
+                    </button>
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="showAutoDiscoverLimitStep('business-all', 'Business Engine')">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">Business Engine (All Historical)</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Gets the current log AND all truncated/historical Business Engine logs.</span>
+                        </div>
+                    </button>
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="showAutoDiscoverLimitStep('comms-all', 'Comms Engine')">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">Comms Engine (All Historical)</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Gets the current log AND all truncated/historical Comms Engine logs.</span>
+                        </div>
+                    </button>
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="showAutoDiscoverLimitStep('web-all', 'TrakaWEB')">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">TrakaWEB (All Historical)</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Gets the current log AND all truncated/historical TrakaWEB logs.</span>
+                        </div>
+                    </button>
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="showAutoDiscoverLimitStep('integration-all', 'Integration Engine')">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">Integration Engine (All Historical)</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Gets all historical logs from the Integration Engine directory.</span>
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body" id="autoDiscoverStep2" style="display: none;">
+                <p style="margin-bottom: 1rem; color: var(--text-secondary);">How many <span id="autoDiscoverEngineName" style="color: var(--text-primary); font-weight: bold;"></span> logs would you like to load?</p>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="executeAutoDiscover(window.currentAutoDiscoverMode, 5)">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">Top 5 Logs</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Load the most recent 5 files (Faster)</span>
+                        </div>
+                    </button>
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="executeAutoDiscover(window.currentAutoDiscoverMode, 10)">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">Top 10 Logs</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Load the most recent 10 files</span>
+                        </div>
+                    </button>
+                    <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left; padding: 1rem; height: auto;" onclick="executeAutoDiscover(window.currentAutoDiscoverMode, 'all')">
+                        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <strong style="color: var(--text-primary); font-size: 0.9375rem;">All Available Logs</strong>
+                            <span style="color: var(--text-secondary); font-weight: normal; font-size: 0.8125rem;">Load all historical files found (May take longer)</span>
+                        </div>
+                    </button>
+                </div>
+                <div style="margin-top: 1.5rem; display: flex; justify-content: flex-start;">
+                    <button class="btn btn-secondary" onclick="hideAutoDiscoverLimitStep()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; margin-right: 0.25rem;">
+                            <line x1="19" y1="12" x2="5" y2="12"></line>
+                            <polyline points="12 19 5 12 12 5"></polyline>
+                        </svg>
+                        Back
+                    </button>
+                </div>
             </div>
         </div>
     </div>

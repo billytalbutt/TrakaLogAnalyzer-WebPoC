@@ -9,7 +9,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
     // File System Operations
-    scanTrakaLogs: () => ipcRenderer.invoke('scan-traka-logs'),
+    scanTrakaLogs: (mode, limit) => ipcRenderer.invoke('scan-traka-logs', mode, limit),
     scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
     readLogFile: (filePath) => ipcRenderer.invoke('read-log-file', filePath),
     readMultipleFiles: (filePaths) => ipcRenderer.invoke('read-multiple-files', filePaths),
@@ -48,6 +48,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Utility Operations
     getDefaultPaths: () => ipcRenderer.invoke('get-default-paths'),
     checkPathExists: (dirPath) => ipcRenderer.invoke('check-path-exists', dirPath),
+    
+    // Popout Window Operations
+    openPopout: (panelIndex, fileData, stateData) => ipcRenderer.invoke('open-popout', panelIndex, fileData, stateData),
+    closePopout: (panelIndex) => ipcRenderer.invoke('close-popout', panelIndex),
+    broadcastSync: (type, data) => ipcRenderer.invoke('broadcast-sync', type, data),
+    
+    // Popout Events
+    onPopoutClosed: (callback) => {
+        ipcRenderer.on('popout-closed', (event, panelIndex) => callback(panelIndex));
+    },
+    onSyncEvent: (callback) => {
+        ipcRenderer.on('sync-event', (event, payload) => callback(payload.type, payload.data));
+    },
+    onInitPopout: (callback) => {
+        ipcRenderer.on('init-popout', (event, data) => callback(data));
+    },
     
     // Environment Info
     isElectron: true,

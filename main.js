@@ -13,6 +13,7 @@ const chokidar = require('chokidar');
 let mainWindow;
 let fileWatchers = new Map();
 let fileTailWatchers = new Map(); // Per-file watchers for live tail
+let popoutWindows = new Map(); // Map of popout windows by panel index
 
 // Detect installer mode (--setup flag)
 const IS_SETUP_MODE = process.argv.includes('--setup');
@@ -342,8 +343,14 @@ async function scanDirectory(dirPath, extensions = ['.log', '.txt', '.cfg'], rec
                 const subResults = await scanDirectory(fullPath, extensions, true);
                 results.push(...subResults);
             } else if (entry.isFile()) {
+                const lowerName = entry.name.toLowerCase();
                 const ext = path.extname(entry.name).toLowerCase();
-                if (extensions.includes(ext)) {
+                
+                // Traka archived logs often look like "filename.log.20230501" or "filename.log.1"
+                // So we also check if the name contains ".log" or ".txt" anywhere in it
+                const isTrakaArchiveLog = lowerName.includes('.log') || lowerName.includes('.txt') || lowerName.includes('.cfg');
+                
+                if (extensions.includes(ext) || isTrakaArchiveLog) {
                     const stats = await fs.stat(fullPath);
                     results.push({
                         name: entry.name,
@@ -364,9 +371,9 @@ async function scanDirectory(dirPath, extensions = ['.log', '.txt', '.cfg'], rec
 
 /**
  * Categorize Integration Engine logs by type
- * Returns the newest log of each type found in the Integration folder
+ * Returns the newest log of each type found in the Integration folder, or all if returnAll=true
  */
-function categorizeAndFilterLogs(files, directory) {
+function categorizeAndFilterLogs(files, directory, returnAll = false, limit = 'all') {
     // Determine directory type
     const dirLower = directory.toLowerCase();
     
@@ -442,48 +449,115 @@ function categorizeAndFilterLogs(files, directory) {
                     new Date(b.modified) - new Date(a.modified)
                 );
                 
-                // Take the newest (first) from this category
-                const newest = categories[key][0];
-                newest.category = key; // Tag with category for UI display
-                newestLogs.push(newest);
-                
-                console.log(`[LogDiscovery]   ${key}: ${categories[key].length} file(s), selected: ${newest.name} (modified: ${newest.modified})`);
+                if (returnAll) {
+                    let filesToAdd = categories[key];
+                    if (limit !== 'all' && typeof limit === 'number') {
+                        filesToAdd = filesToAdd.slice(0, limit);
+                    }
+                    filesToAdd.forEach(file => {
+                        file.category = key;
+                        newestLogs.push(file);
+                    });
+                    console.log(`[LogDiscovery]   ${key}: ${filesToAdd.length} file(s) added (historical limit: ${limit})`);
+                } else {
+                    // Take the newest (first) from this category
+                    const newest = categories[key][0];
+                    newest.category = key; // Tag with category for UI display
+                    newestLogs.push(newest);
+                    console.log(`[LogDiscovery]   ${key}: ${categories[key].length} file(s), selected: ${newest.name} (modified: ${newest.modified})`);
+                }
             }
         });
         
         return newestLogs;
     }
     
-    // For Business Engine, Comms Engine, TrakaWEB - just get the newest log
+    // For Business Engine, Comms Engine, TrakaWEB
     else {
         if (files.length === 0) return [];
         
         // Sort by modification date descending (newest first)
         files.sort((a, b) => new Date(b.modified) - new Date(a.modified));
         
+        // Find the main log file to determine base name
+        // Prefer files with "debug" or "log" but not "error"
+        let mainFile = files.find(f => {
+            const ln = f.name.toLowerCase();
+            return (ln.includes('debug') || ln.includes('trakaweb')) && !ln.includes('error') && !ln.endsWith('.config');
+        });
+        
+        if (!mainFile) {
+            // fallback to the newest non-error file that is a log
+            mainFile = files.find(f => {
+                const ln = f.name.toLowerCase();
+                return (ln.includes('.log') || ln.includes('.txt')) && !ln.includes('error');
+            }) || files[0];
+        }
+        
+        // Extract the base name (e.g. "Debugging_Log.txt" -> "Debugging_Log")
+        let baseName = mainFile.name.replace(/\.(txt|log|cfg)$/i, '');
+        const dateMatch = baseName.match(/^(.*?)[_-]?\d{8,}$/);
+        if (dateMatch) baseName = dateMatch[1];
+        baseName = baseName.replace(/[_-]$/, '');
+        const baseNameLower = baseName.toLowerCase();
+        
+        let targetFiles = files;
+        
+        if (returnAll) {
+            targetFiles = files.filter(f => {
+                const ln = f.name.toLowerCase();
+                const isErrorLog = ln.includes('error');
+                const mainIsErrorLog = mainFile.name.toLowerCase().includes('error');
+                // Must start with base name and NOT be an error log (unless base name is error log)
+                return ln.startsWith(baseNameLower) && (mainIsErrorLog || !isErrorLog);
+            });
+            if (limit !== 'all' && typeof limit === 'number') {
+                targetFiles = targetFiles.slice(0, limit);
+            }
+        } else {
+            targetFiles = [files[0]]; // Or [mainFile], but [files[0]] preserves original behavior
+        }
+        
         // Log all candidates and which one was selected
         console.log(`[LogDiscovery] Directory: ${directory}`);
-        console.log(`[LogDiscovery]   Found ${files.length} file(s):`);
-        files.forEach((f, i) => {
-            const marker = i === 0 ? ' ★ SELECTED (newest)' : '';
+        console.log(`[LogDiscovery]   Found ${targetFiles.length} file(s) matching base '${baseName}':`);
+        targetFiles.forEach((f, i) => {
+            const marker = (!returnAll && i === 0) ? ' ★ SELECTED (newest)' : (returnAll ? ' ★ SELECTED (historical)' : '');
             console.log(`[LogDiscovery]   ${i + 1}. ${f.name}  (modified: ${f.modified}, size: ${f.size} bytes)${marker}`);
         });
         
-        // Return only the newest log
-        return [files[0]];
+        return targetFiles;
     }
 }
 
 /**
  * Scan all default Traka log locations
  */
-async function scanTrakaLogDirectories() {
+async function scanTrakaLogDirectories(mode = 'all-latest', limit = 'all') {
     const categorizedFiles = [];
     const accessiblePaths = [];
     
+    // Filter directories based on the requested mode
+    let targetPaths = [];
+    if (mode === 'all-latest') {
+        targetPaths = DEFAULT_LOG_PATHS;
+    } else if (mode === 'business-all') {
+        targetPaths = DEFAULT_LOG_PATHS.filter(p => p.includes('Business Engine'));
+    } else if (mode === 'comms-all') {
+        targetPaths = DEFAULT_LOG_PATHS.filter(p => p.includes('Comms Engine'));
+    } else if (mode === 'web-all') {
+        targetPaths = DEFAULT_LOG_PATHS.filter(p => p.includes('TrakaWeb'));
+    } else if (mode === 'integration-all') {
+        targetPaths = DEFAULT_LOG_PATHS.filter(p => p.includes('ProgramData'));
+    } else {
+        targetPaths = DEFAULT_LOG_PATHS; // fallback
+    }
+    
+    const returnAllHistorical = mode !== 'all-latest';
+    
     // Check all directories in parallel for faster discovery
     const existChecks = await Promise.all(
-        DEFAULT_LOG_PATHS.map(async (dirPath) => ({
+        targetPaths.map(async (dirPath) => ({
             dirPath,
             exists: await directoryExists(dirPath)
         }))
@@ -494,7 +568,7 @@ async function scanTrakaLogDirectories() {
         .filter(({ exists }) => exists)
         .map(async ({ dirPath }) => {
             console.log(`[LogDiscovery] Scanning: ${dirPath}`);
-            const files = await scanDirectory(dirPath);
+            const files = await scanDirectory(dirPath, ['.log', '.txt', '.cfg'], returnAllHistorical);
             console.log(`[LogDiscovery]   Raw file count: ${files.length}`);
             return { dirPath, files };
         });
@@ -504,8 +578,8 @@ async function scanTrakaLogDirectories() {
     for (const { dirPath, files } of scanResults) {
         accessiblePaths.push(dirPath);
         
-        // Categorize and filter to newest logs only
-        const filteredFiles = categorizeAndFilterLogs(files, dirPath);
+        // Categorize and filter to newest logs only (or all if requested)
+        const filteredFiles = categorizeAndFilterLogs(files, dirPath, returnAllHistorical, limit);
         
         // Add directory label for UI display
         filteredFiles.forEach(file => {
@@ -786,9 +860,9 @@ function stopWatchingDirectory(watcherId) {
 // ============================================
 
 // Scan for Traka log files
-ipcMain.handle('scan-traka-logs', async () => {
+ipcMain.handle('scan-traka-logs', async (event, mode = 'all-latest', limit = 'all') => {
     try {
-        const result = await scanTrakaLogDirectories();
+        const result = await scanTrakaLogDirectories(mode, limit);
         return { success: true, ...result };
     } catch (error) {
         return { success: false, error: error.message };
@@ -983,11 +1057,17 @@ ipcMain.handle('start-tail-watch', async (event, filePath) => {
                         lastSize = currentSize;
                         
                         // Push update to renderer
-                        mainWindow?.webContents.send('file-tail-update', {
+                        const tailData = {
                             path: changedPath,
                             name: path.basename(changedPath),
                             newContent: newContent,
                             newOffset: currentSize
+                        };
+                        mainWindow?.webContents.send('file-tail-update', tailData);
+                        
+                        // Also send to all popouts
+                        popoutWindows.forEach(win => {
+                            if (!win.isDestroyed()) win.webContents.send('file-tail-update', tailData);
                         });
                     } finally {
                         await fd.close();
@@ -997,11 +1077,18 @@ ipcMain.handle('start-tail-watch', async (event, filePath) => {
                     const content = await fs.readFile(changedPath, 'utf-8');
                     lastSize = currentSize;
                     
-                    mainWindow?.webContents.send('file-tail-reset', {
+                    const resetData = {
                         path: changedPath,
                         name: path.basename(changedPath),
                         content: content,
                         newOffset: currentSize
+                    };
+                    
+                    mainWindow?.webContents.send('file-tail-reset', resetData);
+                    
+                    // Also send to all popouts
+                    popoutWindows.forEach(win => {
+                        if (!win.isDestroyed()) win.webContents.send('file-tail-reset', resetData);
                     });
                 }
             } catch (err) {
@@ -1043,6 +1130,98 @@ ipcMain.handle('stop-tail-watch', async (event, filePath) => {
 ipcMain.handle('stop-all-tail-watches', async () => {
     fileTailWatchers.forEach(watcher => watcher.close());
     fileTailWatchers.clear();
+    return { success: true };
+});
+
+// ============================================
+// Popout Window Management
+// ============================================
+
+ipcMain.handle('open-popout', async (event, panelIndex, fileData, stateData) => {
+    try {
+        // If a popout for this panel already exists, focus it
+        if (popoutWindows.has(panelIndex)) {
+            const existingWin = popoutWindows.get(panelIndex);
+            if (!existingWin.isDestroyed()) {
+                existingWin.focus();
+                return { success: true, isExisting: true };
+            }
+        }
+        
+        const popoutWin = new BrowserWindow({
+            width: 800,
+            height: 900,
+            minWidth: 400,
+            minHeight: 300,
+            icon: path.join(__dirname, 'img/trakaweb-logo.png'),
+            backgroundColor: '#0a0e1a',
+            webPreferences: {
+                preload: path.join(__dirname, 'preload.js'),
+                contextIsolation: true,
+                nodeIntegration: false,
+                sandbox: false
+            }
+        });
+        
+        popoutWin.loadFile('popout.html');
+        
+        // Remove default menu bar for cleaner look
+        popoutWin.setMenuBarVisibility(false);
+        
+        popoutWin.once('ready-to-show', () => {
+            popoutWin.show();
+            // Send initial data to popout
+            popoutWin.webContents.send('init-popout', {
+                panelIndex,
+                fileData,
+                stateData
+            });
+        });
+        
+        popoutWin.on('closed', () => {
+            popoutWindows.delete(panelIndex);
+            // Notify main window to restore the panel
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('popout-closed', panelIndex);
+            }
+        });
+        
+        popoutWindows.set(panelIndex, popoutWin);
+        
+        return { success: true };
+    } catch (error) {
+        console.error('Error opening popout:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('close-popout', async (event, panelIndex) => {
+    if (popoutWindows.has(panelIndex)) {
+        const popoutWin = popoutWindows.get(panelIndex);
+        if (!popoutWin.isDestroyed()) {
+            popoutWin.close();
+        }
+        popoutWindows.delete(panelIndex);
+    }
+    return { success: true };
+});
+
+ipcMain.handle('broadcast-sync', async (event, type, data) => {
+    // Determine sender
+    const sender = event.sender;
+    
+    // Broadcast to main window if sender is not main window
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents !== sender) {
+        mainWindow.webContents.send('sync-event', { type, data });
+    }
+    
+    // Broadcast to all popout windows except sender
+    popoutWindows.forEach((win, panelIndex) => {
+        if (!win.isDestroyed() && win.webContents !== sender) {
+            win.webContents.send('sync-event', { type, data });
+        }
+    });
+    
     return { success: true };
 });
 

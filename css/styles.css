@@ -59,7 +59,6 @@
 
 html {
     font-size: 16px;
-    scroll-behavior: smooth;
 }
 
 body {
@@ -398,7 +397,6 @@ body {
     height: 200px;
     width: auto;
     margin-bottom: 1.5rem;
-    border-radius: 24px;
 }
 
 .hero-icons {
@@ -1028,10 +1026,10 @@ body {
 }
 
 .engine-filter-chip.active {
-    background: var(--accent-primary);
+    background: var(--accent-primary-light);
     border-color: var(--accent-primary);
-    color: white;
-    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
+    color: var(--accent-primary);
+    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.15);
 }
 
 .chip-dot.error { background: var(--accent-danger); }
@@ -1060,6 +1058,7 @@ body {
     color: var(--text-primary);
     font-family: inherit;
     font-size: 0.8125rem;
+    color-scheme: dark;
 }
 
 .date-input:focus {
@@ -1119,6 +1118,8 @@ body {
     padding: 1px 0.5rem;
     line-height: 1.3;
     border-radius: 2px;
+    content-visibility: auto;
+    contain-intrinsic-size: 0 18px;
 }
 
 .log-line:hover {
@@ -1263,10 +1264,10 @@ mark.compare-search-hl {
 }
 
 .compare-search-mode-btn.filter-active {
-    background: var(--accent-primary);
-    color: #000;
+    background: var(--accent-primary-light);
+    color: var(--accent-primary);
     border-color: var(--accent-primary);
-    box-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
+    box-shadow: 0 0 8px rgba(255, 107, 53, 0.15);
 }
 
 /* Match count badge inside search box */
@@ -1713,17 +1714,6 @@ mark.compare-search-hl {
     min-width: 0; /* Allow shrinking below content width */
 }
 
-/* Tiled/Window layout: 4 files in a 2x2 grid */
-.compare-container.tiled-layout {
-    flex-wrap: wrap;
-}
-
-.compare-container.tiled-layout .compare-panel {
-    flex: 1 1 calc(50% - 0.5rem);
-    max-width: calc(50% - 0.375rem);
-    min-height: 0;
-}
-
 .compare-panel {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
@@ -1738,12 +1728,20 @@ mark.compare-search-hl {
     position: relative;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     padding: 0.75rem 1rem;
     background: var(--bg-tertiary);
     border-bottom: 1px solid var(--border-color);
     gap: 0.5rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+}
+
+.compare-panel-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+    flex: 1;
 }
 
 .compare-panel-header h4 {
@@ -1752,7 +1750,11 @@ mark.compare-search-hl {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    flex: 1;
+    overflow: hidden;
+    margin: 0;
+}
+
+.panel-title-text {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1768,14 +1770,10 @@ mark.compare-search-hl {
 .file-badge {
     display: inline-flex;
     align-items: center;
-    padding: 0.25rem 0.75rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
     font-size: 0.75rem;
     color: var(--text-secondary);
-    font-weight: 500;
     white-space: nowrap;
+    opacity: 0.8;
 }
 
 .compare-panel-content {
@@ -1879,9 +1877,9 @@ mark.compare-search-hl {
 }
 
 .faqs-filter-btn.active {
-    background: var(--accent-primary) !important;
+    background: var(--accent-primary-light) !important;
     border-color: var(--accent-primary) !important;
-    color: #fff !important;
+    color: var(--accent-primary) !important;
 }
 
 /* Stats row */
@@ -3282,8 +3280,9 @@ mark.compare-search-hl {
 }
 
 .btn.active {
-    background: var(--bg-hover);
+    background: var(--accent-primary-light);
     border-color: var(--accent-primary);
+    color: var(--accent-primary);
 }
 
 .btn-primary.active {
@@ -3293,8 +3292,9 @@ mark.compare-search-hl {
 
 #liveTailBtn.active,
 #compareLiveTailBtn.active {
-    background: var(--accent-success);
-    border-color: var(--accent-success);
+    background: var(--accent-success) !important;
+    border-color: var(--accent-success) !important;
+    color: white !important;
     animation: pulse 2s ease-in-out infinite;
 }
 
@@ -3529,10 +3529,10 @@ mark.compare-search-hl {
 }
 
 #timeSyncBtn.active {
-    background: var(--accent-primary);
-    color: white;
+    background: var(--accent-primary-light);
+    color: var(--accent-primary);
     border-color: var(--accent-primary);
-    box-shadow: 0 0 20px rgba(255, 107, 53, 0.3);
+    box-shadow: 0 0 10px rgba(255, 107, 53, 0.15);
 }
 
 /* Spin animation for loading state */
@@ -4101,10 +4101,10 @@ mark.compare-search-hl {
 }
 
 #stitchModeBtn.active {
-    background: var(--accent-primary);
-    color: white;
+    background: var(--accent-primary-light);
+    color: var(--accent-primary);
     border-color: var(--accent-primary);
-    box-shadow: var(--shadow-glow);
+    box-shadow: 0 0 10px rgba(255, 107, 53, 0.15);
 }
 
 .empty-message {
@@ -4185,18 +4185,6 @@ mark.compare-search-hl {
 /* Prevent body scrolling when in fullscreen */
 body:has(#page-viewer.fullscreen-mode) {
     overflow: hidden !important;
-}
-
-/* Active state for fullscreen button */
-#fullscreenToggle.active,
-#compareFullscreenToggle.active {
-    background: var(--accent-primary) !important;
-    color: white !important;
-}
-
-#fullscreenToggle.active svg,
-#compareFullscreenToggle.active svg {
-    color: white !important;
 }
 
 /* Fullscreen button animation */
@@ -4580,17 +4568,16 @@ body:has(#page-compare.fullscreen-mode) .nav-sidebar {
     border-bottom-color: var(--accent-success, #22c55e);
 }
 
-.compare-panel.live-tail-active .compare-panel-header::after {
+.compare-panel.live-tail-active .compare-panel-actions::after {
     content: '';
-    position: absolute;
-    top: 50%;
-    right: 3rem;
-    transform: translateY(-50%);
+    display: block;
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background-color: var(--accent-success, #22c55e);
     animation: liveTailPulse 2s ease-in-out infinite;
+    margin-left: 0.25rem;
+    flex-shrink: 0;
 }
 
 @keyframes liveTailPulse {
@@ -4608,6 +4595,7 @@ body:has(#page-compare.fullscreen-mode) .nav-sidebar {
     align-items: center;
     gap: 0.25rem;
     flex-shrink: 0;
+    margin-top: 2px;
 }
 
 .compare-panel-actions .btn-icon {
@@ -4819,3 +4807,96 @@ body:has(#page-compare.fullscreen-mode) .nav-sidebar {
     will-change: transform;
     contain: layout style;
 }
+
+/* ============================================
+   Flatpickr Custom Overrides
+   ============================================ */
+.flatpickr-calendar {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    box-shadow: var(--shadow-lg) !important;
+}
+.flatpickr-calendar .flatpickr-months .flatpickr-month {
+    background: var(--bg-tertiary) !important;
+    color: var(--text-primary) !important;
+    fill: var(--text-primary) !important;
+}
+.flatpickr-calendar .flatpickr-current-month .flatpickr-monthDropdown-months {
+    background: var(--bg-tertiary) !important;
+}
+.flatpickr-calendar .flatpickr-current-month .flatpickr-monthDropdown-months .flatpickr-monthDropdown-month {
+    background: var(--bg-tertiary) !important;
+}
+.flatpickr-calendar .flatpickr-weekdays {
+    background: var(--bg-tertiary) !important;
+}
+.flatpickr-calendar span.flatpickr-weekday {
+    background: var(--bg-tertiary) !important;
+    color: var(--text-secondary) !important;
+}
+.flatpickr-calendar .flatpickr-day:not(.flatpickr-disabled) {
+    color: var(--text-primary) !important;
+}
+.flatpickr-calendar .flatpickr-day.flatpickr-disabled,
+.flatpickr-calendar .flatpickr-day.flatpickr-disabled:hover {
+    color: var(--text-muted) !important;
+    opacity: 0.4 !important;
+    cursor: not-allowed !important;
+}
+.flatpickr-calendar .flatpickr-day.inRange, 
+.flatpickr-calendar .flatpickr-day.prevMonthDay.inRange, 
+.flatpickr-calendar .flatpickr-day.nextMonthDay.inRange, 
+.flatpickr-calendar .flatpickr-day.today.inRange, 
+.flatpickr-calendar .flatpickr-day.prevMonthDay.today.inRange, 
+.flatpickr-calendar .flatpickr-day.nextMonthDay.today.inRange, 
+.flatpickr-calendar .flatpickr-day:hover, 
+.flatpickr-calendar .flatpickr-day.prevMonthDay:hover, 
+.flatpickr-calendar .flatpickr-day.nextMonthDay:hover, 
+.flatpickr-calendar .flatpickr-day:focus, 
+.flatpickr-calendar .flatpickr-day.prevMonthDay:focus, 
+.flatpickr-calendar .flatpickr-day.nextMonthDay:focus {
+    background: var(--bg-hover) !important;
+    border-color: var(--border-color) !important;
+}
+.flatpickr-calendar .flatpickr-day.selected, 
+.flatpickr-calendar .flatpickr-day.startRange, 
+.flatpickr-calendar .flatpickr-day.endRange, 
+.flatpickr-calendar .flatpickr-day.selected.inRange, 
+.flatpickr-calendar .flatpickr-day.startRange.inRange, 
+.flatpickr-calendar .flatpickr-day.endRange.inRange, 
+.flatpickr-calendar .flatpickr-day.selected:focus, 
+.flatpickr-calendar .flatpickr-day.startRange:focus, 
+.flatpickr-calendar .flatpickr-day.endRange:focus, 
+.flatpickr-calendar .flatpickr-day.selected:hover, 
+.flatpickr-calendar .flatpickr-day.startRange:hover, 
+.flatpickr-calendar .flatpickr-day.endRange:hover, 
+.flatpickr-calendar .flatpickr-day.selected.prevMonthDay, 
+.flatpickr-calendar .flatpickr-day.startRange.prevMonthDay, 
+.flatpickr-calendar .flatpickr-day.endRange.prevMonthDay, 
+.flatpickr-calendar .flatpickr-day.selected.nextMonthDay, 
+.flatpickr-calendar .flatpickr-day.startRange.nextMonthDay, 
+.flatpickr-calendar .flatpickr-day.endRange.nextMonthDay {
+    background: var(--accent-primary) !important;
+    border-color: var(--accent-primary) !important;
+    color: white !important;
+}
+.flatpickr-calendar .flatpickr-day.today {
+    border-color: var(--accent-secondary) !important;
+}
+.flatpickr-calendar .flatpickr-time {
+    border-top: 1px solid var(--border-color) !important;
+}
+.flatpickr-calendar .flatpickr-time input {
+    color: var(--text-primary) !important;
+}
+.flatpickr-calendar .flatpickr-time input:hover,
+.flatpickr-calendar .flatpickr-time input:focus {
+    background: var(--bg-hover) !important;
+}
+.flatpickr-calendar .flatpickr-time .flatpickr-am-pm {
+    color: var(--text-primary) !important;
+}
+.flatpickr-calendar .flatpickr-time .flatpickr-time-separator {
+    color: var(--text-primary) !important;
+}
+
