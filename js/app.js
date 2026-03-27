@@ -4802,6 +4802,51 @@ function toggleStitchMode() {
     }
 }
 
+// Drag and drop handlers for stitch list
+let stitchDragSourceEl = null;
+
+function handleStitchDragStart(e) {
+    stitchDragSourceEl = e.currentTarget;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', e.currentTarget.dataset.filename);
+    
+    // Capture the target element for the timeout
+    const targetEl = e.currentTarget;
+    setTimeout(() => {
+        targetEl.style.opacity = '0.5';
+        targetEl.classList.add('dragging');
+    }, 0);
+}
+
+function handleStitchDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    
+    const draggingElement = document.querySelector('.stitch-file-item.dragging');
+    if (!draggingElement) return;
+
+    const targetElement = e.target.closest('.stitch-file-item');
+    if (targetElement && targetElement !== draggingElement) {
+        const container = document.getElementById('stitchFileList');
+        const rect = targetElement.getBoundingClientRect();
+        const midPoint = rect.top + rect.height / 2;
+        if (e.clientY < midPoint) {
+            container.insertBefore(draggingElement, targetElement);
+        } else {
+            container.insertBefore(draggingElement, targetElement.nextElementSibling);
+        }
+    }
+}
+
+function handleStitchDragEnd(e) {
+    const targetEl = e.currentTarget;
+    targetEl.style.opacity = '1';
+    targetEl.classList.remove('dragging');
+    updateStitchOrderBadges();
+    updateStitchOrderDisabledStates();
+    updateStitchSelection();
+}
+
 function populateStitchFileList() {
     const container = document.getElementById('stitchFileList');
     
@@ -4826,7 +4871,9 @@ function populateStitchFileList() {
     let html = '';
     logFiles.forEach((file, index) => {
         html += `
-            <div class="stitch-file-item sortable-item" data-filename="${escapeHtml(file.name)}" style="display: flex; align-items: center; padding: 0.5rem; border: 1px solid var(--border-color); margin-bottom: 0.25rem; border-radius: 4px; background: var(--bg-secondary);">
+            <div class="stitch-file-item sortable-item" draggable="true" data-filename="${escapeHtml(file.name)}" 
+                 ondragstart="handleStitchDragStart(event)" ondragend="handleStitchDragEnd(event)"
+                 style="display: flex; align-items: center; padding: 0.5rem; border: 1px solid var(--border-color); margin-bottom: 0.25rem; border-radius: 4px; background: var(--bg-secondary); cursor: grab;">
                 <div class="stitch-order-controls" style="display: flex; flex-direction: column; margin-right: 8px;">
                     <button class="btn-icon btn-small" onclick="moveStitchItem(this, -1)" title="Move Up" style="padding: 2px;">
                         <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="18 15 12 9 6 15"></polyline></svg>
@@ -4845,11 +4892,15 @@ function populateStitchFileList() {
                         ${file.lines.length.toLocaleString()} lines | ${formatFileSize(file.size)}
                     </span>
                 </label>
+                <div class="drag-handle" style="padding: 0 4px; color: var(--text-tertiary); cursor: grab; display: flex; align-items: center;" title="Drag to reorder">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                </div>
             </div>
         `;
     });
     
     container.innerHTML = html;
+    container.ondragover = handleStitchDragOver;
     updateStitchOrderDisabledStates();
 }
 
@@ -5060,6 +5111,17 @@ async function performStitchAsync() {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
         }
+    }
+    
+    // Add final "END OF STITCHED LOG" separator
+    if (allEntries.length > 0) {
+        allEntries.push({
+            isSeparator: true,
+            raw: `--- END OF STITCHED LOG ---`,
+            lineNumber: -1, // Special marker
+            sourceFile: 'SEPARATOR',
+            timestamp: null // explicitly mark as having no time so it inherits properly later
+        });
     }
     
     const finalEntries = allEntries;
