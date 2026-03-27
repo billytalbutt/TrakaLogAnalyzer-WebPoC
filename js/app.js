@@ -4863,8 +4863,65 @@ function populateStitchFileList() {
         return;
     }
     
-    // Sort files logically: base name first, then by the extension/number/date
+    // Sort files logically to stitch them in chronological order
     logFiles.sort((a, b) => {
+        const parseFilename = (filename) => {
+            const lower = filename.toLowerCase();
+            
+            // Check for suffix rotation: .log.1, .txt.2
+            const suffixMatch = lower.match(/^(.*(?:\.log|\.txt|\.cfg))\.(\d+)$/);
+            if (suffixMatch) {
+                const val = parseInt(suffixMatch[2], 10);
+                // Dates like .20240319 might appear as suffix
+                if (suffixMatch[2].length === 8 && suffixMatch[2].startsWith('20')) {
+                    return { base: suffixMatch[1], type: 'date', val: val };
+                }
+                return { base: suffixMatch[1], type: 'rotation', val: val };
+            }
+            
+            // Check for inline rotation or date: Debugging_Log_20260223.txt or Debugging_Log_001.txt
+            const inlineMatch = lower.match(/^(.*?)_(\d+)(?:\.(?:log|txt|cfg))$/);
+            if (inlineMatch) {
+                const ext = lower.match(/\.(log|txt|cfg)$/)?.[0] || '';
+                const base = inlineMatch[1] + ext;
+                const val = parseInt(inlineMatch[2], 10);
+                
+                // If it's exactly 8 digits and starts with 20 (e.g. 2024...), treat as date
+                if (inlineMatch[2].length === 8 && inlineMatch[2].startsWith('20')) {
+                    return { base: base, type: 'date', val: val };
+                }
+                // Otherwise treat as rotation index (like _001, _002)
+                return { base: base, type: 'rotation', val: val };
+            }
+            
+            // Base file (e.g. Debugging_Log.txt, Integration_Log.txt)
+            return { base: lower, type: 'base', val: 0 };
+        };
+
+        const parsedA = parseFilename(a.name);
+        const parsedB = parseFilename(b.name);
+
+        // Group by base filename
+        const baseCompare = parsedA.base.localeCompare(parsedB.base, undefined, {numeric: true, sensitivity: 'base'});
+        if (baseCompare !== 0) return baseCompare;
+
+        // Within same log group:
+        // Base file always at the bottom (newest)
+        if (parsedA.type === 'base' && parsedB.type !== 'base') return 1;
+        if (parsedB.type === 'base' && parsedA.type !== 'base') return -1;
+        if (parsedA.type === 'base' && parsedB.type === 'base') return 0;
+
+        // If both are dates, sort ascending (smaller/older date first)
+        if (parsedA.type === 'date' && parsedB.type === 'date') {
+            return parsedA.val - parsedB.val;
+        }
+
+        // If both are rotation indices, sort descending (higher/older number first)
+        if (parsedA.type === 'rotation' && parsedB.type === 'rotation') {
+            return parsedB.val - parsedA.val;
+        }
+
+        // Fallback
         return a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'});
     });
     
