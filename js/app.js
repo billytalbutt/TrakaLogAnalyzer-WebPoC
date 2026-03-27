@@ -4879,11 +4879,11 @@ function populateStitchFileList() {
                 return { base: suffixMatch[1], type: 'rotation', val: val };
             }
             
-            // Check for inline rotation or date: Debugging_Log_20260223.txt or Debugging_Log_001.txt
-            const inlineMatch = lower.match(/^(.*?)_(\d+)(?:\.(?:log|txt|cfg))$/);
+            // Check for inline rotation or date: Debugging_Log_20260223.txt or Integration Service Log 001.log
+            const inlineMatch = lower.match(/^(.*?)[_\-\s\(]+(\d+)[\)]?(?:\.(?:log|txt|cfg))$/);
             if (inlineMatch) {
                 const ext = lower.match(/\.(log|txt|cfg)$/)?.[0] || '';
-                const base = inlineMatch[1] + ext;
+                const base = inlineMatch[1].trim() + ext;
                 const val = parseInt(inlineMatch[2], 10);
                 
                 // If it's exactly 8 digits and starts with 20 (e.g. 2024...), treat as date
