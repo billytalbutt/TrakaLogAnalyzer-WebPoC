@@ -374,6 +374,35 @@ body {
     overflow: hidden;
 }
 
+/* Log viewer & config viewer: flex column so log area fills space above footer/highlight */
+#page-viewer.active,
+#page-config.active {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 4rem);
+    overflow: hidden;
+    min-height: 0;
+}
+
+#page-viewer.active > .page-header,
+#page-viewer.active > .viewer-toolbar,
+#page-viewer.active > .stitch-panel,
+#page-viewer.active > .search-filter-bar,
+#page-viewer.active > .viewer-footer,
+#page-viewer.active > .highlight-results-panel,
+#page-config.active > .page-header,
+#page-config.active > .config-viewer-toolbar,
+#page-config.active > .config-viewer-footer {
+    flex-shrink: 0;
+}
+
+#page-viewer.active > .log-container,
+#page-config.active > .log-container.config-viewer-log {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+}
+
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
@@ -473,6 +502,99 @@ body {
 .drop-hint {
     font-size: 0.875rem;
     color: var(--text-tertiary);
+}
+
+/* Issue scan toggle — inside drop zone, centered, no extra card */
+.drop-zone-footer {
+    width: 100%;
+    max-width: 28rem;
+    margin: 0.5rem auto 0;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border-light);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.home-issue-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 1rem;
+    cursor: pointer;
+    user-select: none;
+    text-align: left;
+    margin: 0;
+}
+
+.home-issue-toggle__copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.home-issue-toggle__title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+
+.home-issue-toggle__hint {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    line-height: 1.35;
+}
+
+.home-issue-toggle__input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+}
+
+.home-issue-toggle__switch {
+    flex-shrink: 0;
+    width: 2.75rem;
+    height: 1.625rem;
+    border-radius: 999px;
+    background: var(--border-light);
+    position: relative;
+    transition: background 0.2s ease;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.home-issue-toggle__switch::after {
+    content: '';
+    position: absolute;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    background: var(--text-primary);
+    top: 0.1875rem;
+    left: 0.1875rem;
+    transition: transform 0.2s ease, background 0.2s ease;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.home-issue-toggle__input:checked + .home-issue-toggle__switch {
+    background: var(--accent-primary);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.home-issue-toggle__input:checked + .home-issue-toggle__switch::after {
+    transform: translateX(1.125rem);
+    background: #fff;
+}
+
+.home-issue-toggle__input:focus-visible + .home-issue-toggle__switch {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 3px;
+}
+
+.home-issue-toggle:hover .home-issue-toggle__switch {
+    filter: brightness(1.08);
 }
 
 /* Electron Auto-Discovery Section */
@@ -4065,15 +4187,54 @@ mark.compare-search-hl {
 
 .stitch-legend {
     display: flex;
-    align-items: center;
-    gap: 1.25rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
     padding: 1rem;
     background: var(--bg-elevated);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     margin-top: 1rem;
-    flex-wrap: wrap;
     font-size: 0.875rem;
+}
+
+.stitch-legend-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-primary);
+}
+
+.stitch-legend-header:hover {
+    color: var(--accent-primary);
+}
+
+.stitch-legend-header strong {
+    font-weight: 600;
+}
+
+.stitch-legend-chevron {
+    font-size: 0.7rem;
+    opacity: 0.85;
+    flex-shrink: 0;
+}
+
+.stitch-legend-items {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+}
+
+.stitch-legend-collapsed .stitch-legend-items {
+    display: none !important;
+}
+
+.stitch-legend-collapsed {
+    padding-bottom: 0.75rem;
 }
 
 .stitch-legend strong {
@@ -4169,7 +4330,11 @@ mark.compare-search-hl {
 #page-viewer.fullscreen-mode .highlight-results-panel {
     flex-shrink: 0 !important;
     margin-top: 0.5rem !important;
-    max-height: 200px;
+    max-height: min(40vh, 320px);
+}
+
+#page-viewer.fullscreen-mode .highlight-results-panel.panel-collapsed {
+    max-height: none;
 }
 
 #page-viewer.fullscreen-mode .viewer-footer {
@@ -4178,8 +4343,9 @@ mark.compare-search-hl {
     flex-shrink: 0 !important;
 }
 
-#page-viewer.fullscreen-mode .stitch-legend {
-    margin-top: 0.5rem !important;
+/* Source file legend uses a lot of vertical space; hide it in fullscreen (use toolbar / file name instead). */
+#page-viewer.fullscreen-mode #stitchLegend {
+    display: none !important;
 }
 
 /* Prevent body scrolling when in fullscreen */
@@ -4187,8 +4353,18 @@ body:has(#page-viewer.fullscreen-mode) {
     overflow: hidden !important;
 }
 
+/* True edge-to-edge viewer fullscreen (match compare: hide sidebar, drop main margin) */
+body:has(#page-viewer.fullscreen-mode) .nav-sidebar {
+    display: none !important;
+}
+
+body:has(#page-viewer.fullscreen-mode) .main-content {
+    margin-left: 0 !important;
+    padding: 0 !important;
+}
+
 /* Fullscreen button animation */
-#fullscreenToggle:hover svg,
+.viewer-fullscreen-btn:hover svg,
 #compareFullscreenToggle:hover svg {
     transform: scale(1.1);
     transition: transform var(--transition-fast);

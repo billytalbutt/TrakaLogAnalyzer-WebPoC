@@ -23,7 +23,6 @@
         <nav class="nav-sidebar">
             <div class="nav-brand" style="flex-direction: column; align-items: flex-start; padding: 1.5rem 1rem;">
                 <img src="img/traka-logo-dark.svg" alt="Traka ASSA ABLOY" class="nav-logo" style="width: 120px; height: auto; margin-bottom: 0.5rem; margin-right: 0;">
-                <span class="nav-title" style="font-size: 1rem; color: var(--text-secondary); margin-left: 0.2rem;">Log Analyzer</span>
             </div>
             <ul class="nav-menu">
                 <li class="nav-item active" data-page="home" data-tooltip="Home">
@@ -42,6 +41,15 @@
                         <polyline points="10 9 9 9 8 9"></polyline>
                     </svg>
                     <span>Log Viewer</span>
+                </li>
+                <li class="nav-item" data-page="config" data-tooltip="Config viewer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="9" y1="15" x2="15" y2="15"></line>
+                        <line x1="12" y1="12" x2="12" y2="18"></line>
+                    </svg>
+                    <span>Config</span>
                 </li>
                 <li class="nav-item" data-page="compare" data-tooltip="Compare">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -166,7 +174,17 @@
                             </svg>
                             <span class="drop-text">Drag & drop log files here</span>
                             <span class="drop-hint">or click to browse (.log, .txt, .cfg files supported)</span>
-                            <input type="file" id="homeFileInput" accept=".log,.txt,.cfg" multiple hidden>
+                            <input type="file" id="homeFileInput" accept=".log,.LOG,.txt,.TXT,.cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
+                            <div class="drop-zone-footer">
+                                <label class="home-issue-toggle" title="Turn off for very large logs — faster load and smoother scrolling (same idea as Render error highlighting when stitching)">
+                                    <span class="home-issue-toggle__copy">
+                                        <span class="home-issue-toggle__title">Scan for issues when loading</span>
+                                        <span class="home-issue-toggle__hint">Recommended off for very large logs</span>
+                                    </span>
+                                    <input type="checkbox" id="processIssuesOnLoad" class="home-issue-toggle__input" checked>
+                                    <span class="home-issue-toggle__switch" aria-hidden="true"></span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -275,12 +293,12 @@
                             </svg>
                             Clear All
                         </button>
-                        <button class="btn btn-secondary" id="viewerFullscreenToggleTop" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
+                        <button class="btn btn-secondary viewer-fullscreen-btn" id="viewerFullscreenToggleTop" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
                             </svg>
                         </button>
-                        <input type="file" id="viewerFileInput" accept=".log,.txt,.cfg" multiple hidden>
+                        <input type="file" id="viewerFileInput" accept=".log,.LOG,.txt,.TXT,.cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
                     </div>
                 </div>
                 
@@ -471,7 +489,7 @@
                             </select>
                         </div>
                         
-                        <button class="btn-icon" id="viewerFullscreenToggleBottom" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
+                        <button class="btn-icon viewer-fullscreen-btn" id="viewerFullscreenToggleBottom" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
                             </svg>
@@ -480,6 +498,58 @@
                             <label>Go to line:</label>
                             <input type="number" id="jumpToLine" min="1" placeholder="#">
                             <button class="btn btn-small btn-secondary" onclick="jumpToLine()">Go</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Config file viewer (same session as logs; .cfg only) -->
+            <section class="page" id="page-config">
+                <div class="page-header">
+                    <h2>Config file viewer</h2>
+                    <p>View Traka .cfg files alongside loaded logs. Logs stay in Log Viewer and Compare; configs open here only.</p>
+                </div>
+                <div class="viewer-toolbar config-viewer-toolbar">
+                    <div class="file-selector">
+                        <label>Select config file:</label>
+                        <select id="configFileSelect" class="file-dropdown">
+                            <option value="">-- Load a .cfg file --</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-actions">
+                        <button class="btn btn-secondary" onclick="document.getElementById('configFileInput').click()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            Load config
+                        </button>
+                        <input type="file" id="configFileInput" accept=".cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
+                    </div>
+                </div>
+                <div class="log-container config-viewer-log">
+                    <div class="log-gutter" id="configLogGutter"></div>
+                    <div class="log-content" id="configLogContent">
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                            </svg>
+                            <p>No config file loaded</p>
+                            <span>Load a .cfg from Home, Log Viewer, or use Load config here. Log files are unchanged.</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="viewer-footer config-viewer-footer">
+                    <div class="viewer-footer-info">
+                        <span id="configViewerStats">No file loaded</span>
+                    </div>
+                    <div class="footer-controls">
+                        <div class="jump-to-line">
+                            <label>Go to line:</label>
+                            <input type="number" id="configJumpToLine" min="1" placeholder="#">
+                            <button class="btn btn-small btn-secondary" onclick="jumpToConfigLine()">Go</button>
                         </div>
                     </div>
                 </div>
@@ -502,7 +572,7 @@
                             </svg>
                             Add Files
                         </button>
-                        <input type="file" id="compareFileInput" accept=".log,.txt,.cfg" multiple hidden>
+                        <input type="file" id="compareFileInput" accept=".log,.LOG,.txt,.TXT,.cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
                         <button class="btn btn-secondary" id="compareLiveTailBtn" onclick="toggleLiveTail()" title="Start/Stop live tail monitoring for all files">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="23 4 23 10 17 10"></polyline>

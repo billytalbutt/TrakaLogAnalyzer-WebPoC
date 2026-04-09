@@ -69,7 +69,9 @@ if (isElectron) {
             fileData.size = data.content.length;
             state.lastReadPositions.set(fileData.name, data.newOffset);
             parseLogFile(fileData);
-            detectIssues(fileData);
+            if (!fileData.skipIssueAnalysis) {
+                detectIssues(fileData);
+            }
             
             // Full re-render needed for reset
             const currentFile = state.files[state.currentFileIndex];
@@ -341,7 +343,7 @@ async function loadFileFromPath(filePath, engineType = null, skipUIUpdate = fals
         const result = await window.electronAPI.readLogFile(filePath);
         
         if (result.success) {
-            const isConfig = result.name.endsWith('.cfg');
+            const isConfig = isConfigFilename(result.name);
             const lines = result.content.split(/\r?\n/);
             
             // Create a unique name for the file. Generic filenames like
@@ -392,21 +394,31 @@ async function loadFileFromPath(filePath, engineType = null, skipUIUpdate = fals
                 state.files.push(fileData);
             }
             
-            // Parse and analyze (skip issue detection for config files)
+            applyLoadOptionsToLogFile(fileData);
+            // Parse and analyze (skip issue detection for config files — applyLoadOptions clears issues when skipped)
             parseLogFile(fileData);
             if (!isConfig) {
                 detectIssues(fileData);
+                if (fileData.skipIssueAnalysis) {
+                    updateIssuesUI();
+                }
             }
             
             // Update UI components if not skipping
             if (!skipUIUpdate) {
                 updateUI();
                 updateFileDropdown();
+                updateConfigFileDropdown();
                 updateFilesList();
                 
                 const comparePage = document.getElementById('page-compare');
                 if (comparePage && comparePage.classList.contains('active')) {
                     updateCompareView();
+                }
+                const configPage = document.getElementById('page-config');
+                if (isConfig && configPage && configPage.classList.contains('active')) {
+                    state.currentConfigFileIndex = state.files.findIndex(f => f.name === fileData.name);
+                    displayConfigFile(fileData);
                 }
             }
             
@@ -904,6 +916,8 @@ const state = {
     filterDebounceTimer: null, // Debounce timer for filter changes
     virtualScroll: null,
     compareVirtualScroll: null,
+    /** Index into state.files for the selected config on the Config viewer page */
+    currentConfigFileIndex: -1,
     settings: {
         detectErrors: true,
         detectExceptions: true,
@@ -922,9 +936,58 @@ const state = {
         highlightSearch: true,
         customPatterns: [],
         tailRefreshInterval: 1000, // 1 second refresh for live tail
-        maxTailLines: 10000 // Maximum lines to keep in tail mode
+        maxTailLines: 10000, // Maximum lines to keep in tail mode
+        /** When false, new loads skip issue detection and log line error/warn CSS (faster for huge logs). */
+        processIssuesOnLoad: true
     }
 };
+
+/**
+ * Sync "Process issues on load" checkboxes (home, viewer, compare).
+ */
+function syncProcessIssuesOnLoadCheckboxes(checked) {
+    const el = document.getElementById('processIssuesOnLoad');
+    if (el) el.checked = checked;
+}
+
+function isProcessIssuesOnLoadEnabled() {
+    const el = document.getElementById('processIssuesOnLoad');
+    if (el) return el.checked;
+    return state.settings.processIssuesOnLoad !== false;
+}
+
+function persistProcessIssuesOnLoadPreference() {
+    const checked = isProcessIssuesOnLoadEnabled();
+    state.settings.processIssuesOnLoad = checked;
+    syncProcessIssuesOnLoadCheckboxes(checked);
+    try {
+        localStorage.setItem('trakaLogAnalyzerSettings', JSON.stringify(state.settings));
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+/**
+ * Apply per-file flags for issue scanning and viewer error-level CSS based on load-time option.
+ */
+function isConfigFilename(name) {
+    const n = name.toLowerCase();
+    return n.endsWith('.cfg') || n.endsWith('.ini') || n.endsWith('.config');
+}
+
+function applyLoadOptionsToLogFile(fileData) {
+    if (fileData.isConfig) {
+        fileData.skipIssueAnalysis = false;
+        fileData.skipErrorRendering = false;
+        return;
+    }
+    const process = isProcessIssuesOnLoadEnabled();
+    fileData.skipIssueAnalysis = !process;
+    fileData.skipErrorRendering = !process;
+    if (!process) {
+        state.issues = state.issues.filter(i => i.file !== fileData.name);
+    }
+}
 
 // ============================================
 // Issue Detection Patterns (Traka-specific)
@@ -1015,6 +1078,7 @@ function initializeApp() {
         
         console.log('  ✓ Initializing scroll sync...');
         initScrollSync(); // Initialize scroll synchronization for line numbers
+        initConfigLogScrollSync();
         
         // Initialize solution cards system
         if (typeof initializeSolutionsPanel === 'function') {
@@ -1157,10 +1221,13 @@ function restoreSidebarState() {
 
 function navigateTo(page) {
     const totalLines = state.files.reduce((sum, f) => sum + f.lines.length, 0);
-    const needsLoader = (page === 'compare' || page === 'viewer') && totalLines > 5000;
+    const needsLoader = (page === 'compare' || page === 'viewer' || page === 'config') && totalLines > 5000;
     
     if (needsLoader) {
-        showGlobalLoader('Loading view...', page === 'compare' ? 'Rendering compare panels' : 'Rendering log viewer');
+        showGlobalLoader(
+            'Loading view...',
+            page === 'compare' ? 'Rendering compare panels' : page === 'config' ? 'Loading config viewer' : 'Rendering log viewer'
+        );
     }
     
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -1178,11 +1245,27 @@ function navigateTo(page) {
             }
             
             if (page === 'viewer' && state.files.length > 0) {
-                if (state.currentFileIndex === -1) {
-                    state.currentFileIndex = 0;
-                }
+                resolveViewerFileIndex();
                 updateFileDropdown();
-                displayLog(state.files[state.currentFileIndex]);
+                if (state.currentFileIndex >= 0) {
+                    displayLog(state.files[state.currentFileIndex]);
+                } else {
+                    displayLog(null);
+                }
+            }
+            
+            if (page === 'config') {
+                updateConfigFileDropdown();
+                const configs = state.files.filter(f => f.isConfig);
+                if (configs.length > 0) {
+                    const cfg = state.files[state.currentConfigFileIndex]?.isConfig
+                        ? state.files[state.currentConfigFileIndex]
+                        : configs[0];
+                    state.currentConfigFileIndex = state.files.indexOf(cfg);
+                    displayConfigFile(cfg);
+                } else {
+                    displayConfigFile(null);
+                }
             }
             
             if (page === 'analytics') {
@@ -1225,6 +1308,11 @@ function initFileDropZone() {
     
     if (!dropZone) return;
     
+    const dropZoneFooter = dropZone.querySelector('.drop-zone-footer');
+    if (dropZoneFooter) {
+        dropZoneFooter.addEventListener('click', (e) => e.stopPropagation());
+    }
+    
     dropZone.addEventListener('click', () => fileInput.click());
     
     dropZone.addEventListener('dragover', (e) => {
@@ -1262,14 +1350,64 @@ function initFileInputs() {
         // Compare page file input - stay on compare, sort intelligently
         compareInput.addEventListener('change', (e) => handleFiles(e.target.files, true, true));
     }
+    
+    const configInput = document.getElementById('configFileInput');
+    if (configInput) {
+        configInput.addEventListener('change', (e) => handleConfigPageFiles(e.target.files));
+    }
+}
+
+/**
+ * Load config-style files from the Config viewer page (stays on config when active).
+ */
+function handleConfigPageFiles(files) {
+    const validFiles = Array.from(files).filter(file => {
+        if (isConfigFilename(file.name)) return true;
+        showToast(`Skipped ${file.name} — use .cfg, .ini, or .config here`, 'warning');
+        return false;
+    });
+    if (validFiles.length === 0) return;
+    
+    const configPageActive = document.getElementById('page-config')?.classList.contains('active');
+    const suppressToast = validFiles.length > 1;
+    const configInput = document.getElementById('configFileInput');
+    showGlobalLoader(`Loading ${validFiles.length} file(s)...`, 'Please wait');
+    let pending = validFiles.length;
+    const onConfigFileReaderDone = () => {
+        pending--;
+        if (pending > 0) return;
+        updateConfigFileDropdown();
+        if (configPageActive && validFiles.length > 0) {
+            let pickIdx = -1;
+            for (let i = validFiles.length - 1; i >= 0; i--) {
+                const idx = state.files.findIndex(f => f.name === validFiles[i].name);
+                if (idx >= 0) {
+                    pickIdx = idx;
+                    break;
+                }
+            }
+            if (pickIdx >= 0) {
+                state.currentConfigFileIndex = pickIdx;
+                displayConfigFile(state.files[pickIdx]);
+            }
+        }
+        hideGlobalLoader();
+        showToast(`Loaded ${validFiles.length} config file${validFiles.length !== 1 ? 's' : ''}`, 'success');
+        if (configInput) configInput.value = '';
+    };
+    setTimeout(() => {
+        validFiles.forEach(file => loadFile(file, true, suppressToast, onConfigFileReaderDone));
+    }, 50);
 }
 
 function handleFiles(files, sortIntelligently = false, skipNavigation = false) {
     const validFiles = Array.from(files).filter(file => {
-        if (file.name.endsWith('.log') || file.name.endsWith('.txt') || file.name.endsWith('.cfg')) {
+        const lower = file.name.toLowerCase();
+        if (lower.endsWith('.log') || lower.endsWith('.txt') || lower.endsWith('.cfg')
+            || lower.endsWith('.ini') || lower.endsWith('.config')) {
             return true;
         } else {
-            showToast(`Skipped ${file.name} - only .log, .txt, and .cfg files supported`, 'warning');
+            showToast(`Skipped ${file.name} - only .log, .txt, .cfg, .ini, and .config files supported`, 'warning');
             return false;
         }
     });
@@ -1551,12 +1689,15 @@ function detectEngineTypeFromContent(file) {
     return 'Business Engine';
 }
 
-function loadFile(file, skipNavigation = false, suppressToast = false) {
+function loadFile(file, skipNavigation = false, suppressToast = false, onLoaded = null) {
     const reader = new FileReader();
+    const finishLoad = () => {
+        if (typeof onLoaded === 'function') onLoaded();
+    };
     
     reader.onload = (e) => {
         const content = e.target.result;
-        const isConfig = file.name.endsWith('.cfg');
+        const isConfig = isConfigFilename(file.name);
         const fileData = {
             name: file.name,
             originalName: file.name,
@@ -1605,15 +1746,20 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
         // Initialize last read position for live tail
         state.lastReadPositions.set(file.name, content.length);
         
-        // Parse and analyze (skip issue detection for config files)
+        applyLoadOptionsToLogFile(fileData);
+        // Parse and analyze (config files never skip parsing; issues skipped in detectIssues for .cfg)
         parseLogFile(fileData);
         if (!isConfig) {
             detectIssues(fileData);
+            if (fileData.skipIssueAnalysis) {
+                updateIssuesUI();
+            }
         }
         
         // Update UI
         updateUI();
         updateFileDropdown();
+        updateConfigFileDropdown();
         updateFilesList();
         
         // Only rebuild compare view if currently on the compare page
@@ -1622,15 +1768,22 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
             updateCompareView();
         }
         
-        // Auto-select first file only if we're not skipping navigation
-        if (!skipNavigation && state.files.length === 1) {
-            state.currentFileIndex = 0;
-            displayLog(state.files[0]);
+        // Auto-select first log only if single non-config load
+        if (!skipNavigation && state.files.length === 1 && !isConfig) {
+            resolveViewerFileIndex();
+            if (state.currentFileIndex >= 0) {
+                displayLog(state.files[state.currentFileIndex]);
+            }
         }
         
-        // Navigate to viewer for better UX - but NOT if skipNavigation is true
-        if (!skipNavigation) {
-            navigateTo('viewer');
+        // Navigate on single-file loads (batch sets suppressToast so we stay put)
+        if (!skipNavigation && !suppressToast) {
+            if (isConfig) {
+                state.currentConfigFileIndex = state.files.findIndex(f => f.name === fileData.name);
+                navigateTo('config');
+            } else {
+                navigateTo('viewer');
+            }
         }
         
         // Show individual toast only if not suppressed (for batch loading)
@@ -1638,10 +1791,12 @@ function loadFile(file, skipNavigation = false, suppressToast = false) {
             const fileType = isConfig ? 'config file' : 'log file';
             showToast(`Loaded ${file.name} as ${fileType} (${formatFileSize(file.size)})`, 'success');
         }
+        finishLoad();
     };
     
     reader.onerror = () => {
         showToast(`Failed to load ${file.name}`, 'error');
+        finishLoad();
     };
     
     reader.readAsText(file);
@@ -1706,6 +1861,9 @@ function extractTimestamp(line) {
 // Issue Detection
 // ============================================
 function detectIssues(fileData) {
+    if (!fileData || fileData.isConfig || fileData.isStitched || fileData.skipIssueAnalysis) {
+        return;
+    }
     const fileIssues = [];
     
     // Pre-compile custom regexes for this file to avoid recreating them for every line
@@ -1965,6 +2123,8 @@ function displayLog(fileData) {
         return;
     }
     
+    hideStitchLegend();
+    
     if (toggleContainer) {
         toggleContainer.style.display = 'none';
     }
@@ -2013,9 +2173,63 @@ function displayLog(fileData) {
     } else {
         renderLogOptimized(fileData, filteredLines, gutter, content);
     }
+    
+    updateIssuesUI();
 }
 
-function renderLogOptimized(fileData, filteredLines, gutter, content) {
+/**
+ * Render a loaded .cfg / .ini / .config in the Config viewer (separate DOM from Log Viewer).
+ */
+function displayConfigFile(fileData) {
+    const gutter = document.getElementById('configLogGutter');
+    const content = document.getElementById('configLogContent');
+    if (!gutter || !content) return;
+
+    cleanupViewerVirtualScroll();
+
+    if (!fileData || !fileData.isConfig) {
+        content.innerHTML = `
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <p>No config file loaded</p>
+                <span>Load a config from Home, Log Viewer, or use Load config on this page.</span>
+            </div>
+        `;
+        gutter.innerHTML = '';
+        const st = document.getElementById('configViewerStats');
+        if (st) st.textContent = 'No file loaded';
+        return;
+    }
+
+    if (!state.parsedLogs.has(fileData.name)) {
+        parseLogFile(fileData);
+    }
+    const parsed = state.parsedLogs.get(fileData.name) || [];
+    let filteredLines = [...parsed];
+    filteredLines = sortLogLinesByDate(filteredLines);
+
+    if (filteredLines.length > 5000) {
+        content.innerHTML = `
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="spin-animation">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                <p>Rendering config file...</p>
+                <span>${filteredLines.length.toLocaleString()} lines</span>
+            </div>
+        `;
+        setTimeout(() => renderLogOptimized(fileData, filteredLines, gutter, content, 'configViewerStats'), 50);
+    } else {
+        renderLogOptimized(fileData, filteredLines, gutter, content, 'configViewerStats');
+    }
+}
+
+function renderLogOptimized(fileData, filteredLines, gutter, content, statsElementId = 'viewerStats') {
     const VIRTUAL_THRESHOLD = 15000;
 
     cleanupViewerVirtualScroll();
@@ -2023,11 +2237,11 @@ function renderLogOptimized(fileData, filteredLines, gutter, content) {
     if (filteredLines.length < VIRTUAL_THRESHOLD) {
         content.classList.remove('virtual-scroll-mode');
         gutter.classList.remove('virtual-scroll-mode');
-        renderLogDirect(fileData, filteredLines, gutter, content);
+        renderLogDirect(fileData, filteredLines, gutter, content, statsElementId);
         return;
     }
 
-    setupViewerVirtualScroll(fileData, filteredLines, gutter, content);
+    setupViewerVirtualScroll(fileData, filteredLines, gutter, content, statsElementId);
 }
 
 function renderLogBatched(fileData, filteredLines, gutter, content, startIdx, batchSize, callback) {
@@ -2116,7 +2330,7 @@ function cleanupViewerVirtualScroll() {
     state.virtualScroll = null;
 }
 
-function setupViewerVirtualScroll(fileData, filteredLines, gutter, content) {
+function setupViewerVirtualScroll(fileData, filteredLines, gutter, content, statsElementId = 'viewerStats') {
     const lineHeight = 20;
     const totalHeight = filteredLines.length * lineHeight;
     const OVERSCAN = 200;
@@ -2136,7 +2350,8 @@ function setupViewerVirtualScroll(fileData, filteredLines, gutter, content) {
         contentEl: content,
         gutterEl: gutter,
         viewport: null,
-        gutterViewport: null
+        gutterViewport: null,
+        statsElementId: statsElementId
     };
 
     content.innerHTML = '';
@@ -2177,11 +2392,11 @@ function setupViewerVirtualScroll(fileData, filteredLines, gutter, content) {
 
     updateViewerViewport(true);
 
-    updateViewerStats(fileData, filteredLines.length);
+    updateViewerStats(fileData, filteredLines.length, statsElementId);
     content.style.fontSize = `${state.settings.fontSize}px`;
     gutter.style.fontSize = `${state.settings.fontSize}px`;
 
-    if (state.liveTailActive && state.autoScrollEnabled) {
+    if (statsElementId === 'viewerStats' && state.liveTailActive && state.autoScrollEnabled) {
         requestAnimationFrame(() => {
             content.scrollTop = content.scrollHeight;
         });
@@ -2279,7 +2494,7 @@ function updateViewerViewport(force) {
     }
 }
 
-function renderLogDirect(fileData, filteredLines, gutter, content) {
+function renderLogDirect(fileData, filteredLines, gutter, content, statsElementId = 'viewerStats') {
     // Build gutter using DocumentFragment
     if (state.settings.showLineNumbers) {
         const gutterFragment = document.createDocumentFragment();
@@ -2361,7 +2576,7 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
     content.appendChild(contentFragment);
     
     // Update stats
-    updateViewerStats(fileData, filteredLines.length);
+    updateViewerStats(fileData, filteredLines.length, statsElementId);
     
     // Apply font size
     content.style.fontSize = `${state.settings.fontSize}px`;
@@ -2371,7 +2586,7 @@ function renderLogDirect(fileData, filteredLines, gutter, content) {
     content.style.whiteSpace = state.settings.wordWrap ? 'pre-wrap' : 'pre';
     
     // If live tail is active, scroll to bottom so newest content is visible
-    if (state.liveTailActive && state.autoScrollEnabled) {
+    if (statsElementId === 'viewerStats' && state.liveTailActive && state.autoScrollEnabled) {
         requestAnimationFrame(() => {
             content.scrollTop = content.scrollHeight;
         });
@@ -2489,12 +2704,14 @@ function filterLines(parsed) {
     return filtered;
 }
 
-function updateViewerStats(fileData, displayedLines) {
-    const stats = document.getElementById('viewerStats');
+function updateViewerStats(fileData, displayedLines, statsElementId = 'viewerStats') {
+    const stats = document.getElementById(statsElementId);
     if (stats) {
         stats.textContent = `${fileData.name} | ${displayedLines.toLocaleString()} of ${fileData.lines.length.toLocaleString()} lines displayed`;
     }
-    updateViewerHighlightCounts();
+    if (statsElementId === 'viewerStats') {
+        updateViewerHighlightCounts();
+    }
 }
 
 // ============================================
@@ -2997,8 +3214,9 @@ function initCompareDropZone() {
 
 function updateCompareView() {
     const container = document.getElementById('compareContainer');
+    const compareFiles = state.files.filter(f => !f.isConfig);
     
-    if (state.files.length < 1) {
+    if (compareFiles.length < 1) {
         container.innerHTML = `
             <div class="compare-empty" id="compareDropZone">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -3007,7 +3225,7 @@ function updateCompareView() {
                     <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
                 <p class="drop-title">Drag & Drop Multiple Logs Here</p>
-                <span class="drop-instruction">Drop Business, Comms, Integration, and Plugin logs</span>
+                <span class="drop-instruction">Compare log files side by side (open .cfg files on the Config page).</span>
                 <span class="drop-hint">Files will be automatically sorted: Business → Comms → Integration → Plugins</span>
                 <button class="btn btn-secondary" onclick="document.getElementById('compareFileInput').click()" style="margin-top: 1rem;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3026,10 +3244,10 @@ function updateCompareView() {
     }
     
     // Set data attribute for grid layout
-    container.setAttribute('data-file-count', state.files.length);
+    container.setAttribute('data-file-count', compareFiles.length);
     
     // Set CSS variable for file count
-    container.style.setProperty('--file-count', state.files.length);
+    container.style.setProperty('--file-count', compareFiles.length);
     
     // Clean up minimized indices that no longer exist (e.g. after file removal)
     state.minimizedPanels.forEach(idx => {
@@ -3037,10 +3255,9 @@ function updateCompareView() {
     });
     
     // Build panel HTML — minimized and popped-out panels are hidden via CSS class
-    const panelsHtml = state.files.map((file, index) => {
-        const fileTypeBadge = file.isConfig 
-            ? '<span class="file-type-badge config" style="margin-left: 0.5rem;">CONFIG</span>' 
-            : '';
+    const panelsHtml = compareFiles.map((file, panelIndex) => {
+        const index = state.files.indexOf(file);
+        const fileTypeBadge = '';
         
         const liveTailClass = state.liveTailActive ? ' live-tail-active' : '';
         const isMinimized = state.minimizedPanels.has(index);
@@ -3092,7 +3309,7 @@ function updateCompareView() {
                     </button>
                 </div>
             </div>
-            <div class="compare-panel-content virtual-scroll-mode" data-panel-index="${index}" onscroll="handleCompareScroll(event, ${index})">
+            <div class="compare-panel-content virtual-scroll-mode" data-panel-index="${panelIndex}" onscroll="handleCompareScroll(event, ${panelIndex})">
                 <div class="virtual-scroll-spacer" style="height: ${file.lines.length * 20}px; position: relative;">
                     <div class="virtual-scroll-viewport" style="position: absolute; left: 0; right: 0; will-change: transform;"></div>
                 </div>
@@ -3103,7 +3320,7 @@ function updateCompareView() {
     
     container.innerHTML = panelsHtml;
 
-    initCompareVirtualScroll(container);
+    initCompareVirtualScroll(container, compareFiles);
 
     // Build/update the floating minimized dock (lives outside the container)
     updateMinimizedDock();
@@ -3123,13 +3340,14 @@ function cleanupCompareVirtualScroll() {
     state.compareVirtualScroll = null;
 }
 
-function initCompareVirtualScroll(container) {
+function initCompareVirtualScroll(container, compareFiles) {
     cleanupCompareVirtualScroll();
 
     const compareLineHeight = 20;
     const OVERSCAN = 150;
-    state.compareVirtualScroll = state.files.map((file, index) => {
-        const panelContent = container.querySelector(`[data-panel-index="${index}"]`);
+    state.compareVirtualScroll = compareFiles.map((file, panelIndex) => {
+        const globalIndex = state.files.indexOf(file);
+        const panelContent = container.querySelector(`[data-panel-index="${panelIndex}"]`);
         if (!panelContent) return null;
 
         const viewport = panelContent.querySelector('.virtual-scroll-viewport');
@@ -3142,14 +3360,14 @@ function initCompareVirtualScroll(container) {
             overscan: OVERSCAN,
             lastRenderedStart: -1,
             lastRenderedEnd: -1,
-            fileIndex: index,
+            fileIndex: globalIndex,
             searchMatchIndices: null,
             searchQuery: ''
         };
 
-        panelContent.addEventListener('scroll', () => updateComparePanelViewport(index), { passive: true });
+        panelContent.addEventListener('scroll', () => updateComparePanelViewport(panelIndex), { passive: true });
 
-        updateComparePanelViewport(index, true);
+        updateComparePanelViewport(panelIndex, true);
 
         return vsState;
     });
@@ -3203,7 +3421,7 @@ function updateComparePanelViewport(index, force) {
     for (let i = startIdx; i < endIdx; i++) {
         const line = file.lines[i];
         const level = detectLogLevel(line);
-        let levelClass = level !== 'default' ? level : '';
+        let levelClass = (!file.skipErrorRendering && level !== 'default') ? level : '';
         const timestamp = extractTimestamp(line);
         const timestampAttr = timestamp ? ` data-timestamp="${timestamp}"` : '';
         const clickHandler = timeSyncActive && timestamp ? ` onclick="syncToTimestamp('${timestamp}', ${fileIndex}, ${i + 1})"` : '';
@@ -3617,9 +3835,16 @@ function removeFile(index) {
     state.lastReadPositions.delete(fileName);
     
     if (state.currentFileIndex === index) {
-        state.currentFileIndex = state.files.length > 0 ? 0 : -1;
+        state.currentFileIndex = -1;
     } else if (state.currentFileIndex > index) {
         state.currentFileIndex--;
+    }
+    
+    if (state.currentConfigFileIndex === index) {
+        const nextCfg = state.files.find(f => f.isConfig);
+        state.currentConfigFileIndex = nextCfg ? state.files.indexOf(nextCfg) : -1;
+    } else if (state.currentConfigFileIndex > index) {
+        state.currentConfigFileIndex--;
     }
     
     // For heavy files, show a loader so the UI doesn't appear frozen
@@ -3629,28 +3854,40 @@ function removeFile(index) {
         setTimeout(() => {
             updateUI();
             updateFileDropdown();
+            updateConfigFileDropdown();
             updateFilesList();
             updateCompareView();
             updateIssuesUI();
+            resolveViewerFileIndex();
             
             if (state.currentFileIndex >= 0) {
                 displayLog(state.files[state.currentFileIndex]);
             } else {
                 displayLog(null);
             }
+            if (document.getElementById('page-config')?.classList.contains('active')) {
+                const cfg = state.files[state.currentConfigFileIndex];
+                displayConfigFile(cfg && cfg.isConfig ? cfg : null);
+            }
             hideGlobalLoader();
         }, 50);
     } else {
         updateUI();
         updateFileDropdown();
+        updateConfigFileDropdown();
         updateFilesList();
         updateCompareView();
         updateIssuesUI();
+        resolveViewerFileIndex();
         
         if (state.currentFileIndex >= 0) {
             displayLog(state.files[state.currentFileIndex]);
         } else {
             displayLog(null);
+        }
+        if (document.getElementById('page-config')?.classList.contains('active')) {
+            const cfg = state.files[state.currentConfigFileIndex];
+            displayConfigFile(cfg && cfg.isConfig ? cfg : null);
         }
     }
 }
@@ -3814,7 +4051,9 @@ async function pollElectronFiles() {
                 fileData.lines = result.newContent.split(/\r?\n/);
                 fileData.size = result.newContent.length;
                 parseLogFile(fileData);
-                detectIssues(fileData);
+                if (!fileData.skipIssueAnalysis) {
+                    detectIssues(fileData);
+                }
                 
                 const currentFile = state.files[state.currentFileIndex];
                 if (currentFile && currentFile.name === fileData.name) {
@@ -4049,13 +4288,17 @@ function appendLinesToViewer(fileData, newLines, startLineIdx) {
  * This is the key function for real-time live tail in the Compare view.
  */
 function appendLinesToComparePanel(fileData, fileIndex, newLines, startLineIdx) {
-    if (state.compareVirtualScroll && state.compareVirtualScroll[fileIndex]) {
-        const vs = state.compareVirtualScroll[fileIndex];
+    const compareFiles = state.files.filter(f => !f.isConfig);
+    const panelIndex = compareFiles.findIndex(f => f.name === fileData.name);
+    if (panelIndex < 0) return;
+
+    if (state.compareVirtualScroll && state.compareVirtualScroll[panelIndex]) {
+        const vs = state.compareVirtualScroll[panelIndex];
         const newTotalHeight = fileData.lines.length * vs.lineHeight;
         const spacer = vs.panelContent.querySelector('.virtual-scroll-spacer');
         if (spacer) spacer.style.height = newTotalHeight + 'px';
         vs.lastRenderedStart = -1;
-        updateComparePanelViewport(fileIndex);
+        updateComparePanelViewport(panelIndex);
         return;
     }
 
@@ -4216,11 +4459,10 @@ function updateIssuesUI() {
         performance: state.issues.filter(i => i.category === 'performance').length
     };
     
-    // Check if current file is stitched and skipErrorRendering is true
     const currentFile = state.files && state.currentFileIndex >= 0 ? state.files[state.currentFileIndex] : null;
     
-    if (currentFile && currentFile.isStitched && currentFile.skipErrorRendering) {
-        // Zero out counts for the UI when viewing a stitched file without issue rendering
+    if (currentFile && currentFile.skipErrorRendering) {
+        // Stitched (optional) or normal log loaded with "process issues" off — keep UI light
         document.getElementById('countAll').textContent = '0';
         document.getElementById('countCritical').textContent = '0';
         document.getElementById('countError').textContent = '0';
@@ -4248,18 +4490,19 @@ function updateIssuesUI() {
 function renderIssues() {
     const container = document.getElementById('issuesList');
     
-    // Check if we are viewing a stitched file with skipErrorRendering enabled
     const currentFile = state.files[state.currentFileIndex];
-    if (currentFile && currentFile.isStitched && currentFile.skipErrorRendering) {
-        // Only show message, don't show the hundreds of issues from original files to avoid confusion
+    if (currentFile && currentFile.skipErrorRendering) {
+        const detail = currentFile.isStitched
+            ? 'You turned off error highlighting for this stitched log.'
+            : 'This file was loaded with "Process issues on load" unchecked — no issues were scanned and log lines use plain styling for speed.';
         container.innerHTML = `
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
                     <line x1="1" y1="1" x2="23" y2="23"></line>
                 </svg>
-                <p>Issue Highlighting Disabled</p>
-                <span>You chose not to render issues for this stitched file to improve scrolling performance.</span>
+                <p>Issue highlighting disabled</p>
+                <span>${detail}</span>
             </div>
         `;
         
@@ -4469,6 +4712,14 @@ function initSettings() {
             });
         }
     });
+    
+    const processIssuesOnLoadEl = document.getElementById('processIssuesOnLoad');
+    if (processIssuesOnLoadEl) {
+        processIssuesOnLoadEl.addEventListener('change', (e) => {
+            syncProcessIssuesOnLoadCheckboxes(e.target.checked);
+            persistProcessIssuesOnLoadPreference();
+        });
+    }
 }
 
 function loadSettings() {
@@ -4497,6 +4748,8 @@ function loadSettings() {
     document.getElementById('detectIntegration').checked = state.settings.detectIntegration;
     document.getElementById('detectCabinet').checked = state.settings.detectCabinet;
     document.getElementById('detectAPI').checked = state.settings.detectAPI;
+    
+    syncProcessIssuesOnLoadCheckboxes(state.settings.processIssuesOnLoad !== false);
 }
 
 function saveSettings() {
@@ -4516,6 +4769,8 @@ function saveSettings() {
     state.settings.detectIntegration = document.getElementById('detectIntegration').checked;
     state.settings.detectCabinet = document.getElementById('detectCabinet').checked;
     state.settings.detectAPI = document.getElementById('detectAPI').checked;
+    state.settings.processIssuesOnLoad = isProcessIssuesOnLoadEnabled();
+    syncProcessIssuesOnLoadCheckboxes(state.settings.processIssuesOnLoad);
     
     // Gather custom patterns
     state.settings.customPatterns = [];
@@ -4568,7 +4823,8 @@ function resetSettings() {
         wordWrap: true,
         showLineNumbers: true,
         highlightSearch: true,
-        customPatterns: []
+        customPatterns: [],
+        processIssuesOnLoad: true
     };
     
     localStorage.removeItem('trakaLogAnalyzerSettings');
@@ -4621,17 +4877,62 @@ function updateUI() {
     document.getElementById('recentFilesSection').style.display = state.files.length > 0 ? 'block' : 'none';
 }
 
+function resolveViewerFileIndex() {
+    const logs = state.files.filter(f => !f.isConfig);
+    if (logs.length === 0) {
+        state.currentFileIndex = -1;
+        return;
+    }
+    const cur = state.currentFileIndex >= 0 ? state.files[state.currentFileIndex] : null;
+    if (!cur || cur.isConfig) {
+        state.currentFileIndex = state.files.indexOf(logs[0]);
+    } else if (!logs.some(f => f.name === cur.name)) {
+        state.currentFileIndex = state.files.indexOf(logs[0]);
+    }
+}
+
+function updateConfigFileDropdown() {
+    const select = document.getElementById('configFileSelect');
+    if (!select) return;
+    const configs = state.files.filter(f => f.isConfig);
+    if (configs.length === 0) {
+        select.innerHTML = '<option value="">-- Load a .cfg file --</option>';
+        state.currentConfigFileIndex = -1;
+        return;
+    }
+    if (state.currentConfigFileIndex < 0 || !state.files[state.currentConfigFileIndex]?.isConfig) {
+        state.currentConfigFileIndex = state.files.indexOf(configs[0]);
+    }
+    select.innerHTML = configs.map(f => {
+        const idx = state.files.indexOf(f);
+        const sel = idx === state.currentConfigFileIndex ? ' selected' : '';
+        return `<option value="${escapeHtml(f.name)}"${sel}>${escapeHtml(getDisplayFileName(f))}</option>`;
+    }).join('');
+    select.onchange = (e) => {
+        const idx = state.files.findIndex(f => f.name === e.target.value);
+        if (idx >= 0 && state.files[idx].isConfig) {
+            state.currentConfigFileIndex = idx;
+            displayConfigFile(state.files[idx]);
+        }
+    };
+}
+
 function updateFileDropdown() {
     const select = document.getElementById('viewerFileSelect');
+    if (!select) return;
     
-    if (state.files.length === 0) {
-        select.innerHTML = '<option value="">-- Load a file first --</option>';
+    resolveViewerFileIndex();
+    const logFiles = state.files.filter(f => !f.isConfig);
+    if (logFiles.length === 0) {
+        select.innerHTML = '<option value="">-- Load a log file first --</option>';
         return;
     }
     
-    select.innerHTML = state.files.map((file, index) => 
-        `<option value="${escapeHtml(file.name)}" ${index === state.currentFileIndex ? 'selected' : ''}>${escapeHtml(getDisplayFileName(file))}</option>`
-    ).join('');
+    select.innerHTML = logFiles.map(file => {
+        const idx = state.files.indexOf(file);
+        const sel = idx === state.currentFileIndex ? ' selected' : '';
+        return `<option value="${escapeHtml(file.name)}"${sel}>${escapeHtml(getDisplayFileName(file))}</option>`;
+    }).join('');
     
     select.onchange = (e) => {
         const index = state.files.findIndex(f => f.name === e.target.value);
@@ -4639,7 +4940,6 @@ function updateFileDropdown() {
             state.currentFileIndex = index;
             const file = state.files[index];
             
-            // Show loading for larger files
             if (file.lines && file.lines.length > 2000) {
                 showGlobalLoader('Loading file...', file.name);
                 setTimeout(() => {
@@ -4688,12 +4988,26 @@ function updateFilesList() {
 }
 
 function viewFile(index) {
+    const file = state.files[index];
+    if (file.isConfig) {
+        state.currentConfigFileIndex = index;
+        updateConfigFileDropdown();
+        if (file.lines && file.lines.length > 2000) {
+            showGlobalLoader('Loading file...', file.name);
+            setTimeout(() => {
+                displayConfigFile(file);
+                navigateTo('config');
+                hideGlobalLoader();
+            }, 50);
+        } else {
+            displayConfigFile(file);
+            navigateTo('config');
+        }
+        return;
+    }
     state.currentFileIndex = index;
     updateFileDropdown();
     
-    const file = state.files[index];
-    
-    // Show loading for larger files
     if (file.lines && file.lines.length > 2000) {
         showGlobalLoader('Loading file...', file.name);
         setTimeout(() => {
@@ -4714,7 +5028,8 @@ function jumpToLine() {
         return;
     }
     
-    if (state.virtualScroll && state.virtualScroll.active) {
+    const mainLogContent = document.getElementById('logContent');
+    if (state.virtualScroll && state.virtualScroll.active && state.virtualScroll.contentEl === mainLogContent) {
         const vs = state.virtualScroll;
         const idx = vs.filteredLines.findIndex(e => e.lineNumber === lineNum);
         if (idx >= 0) {
@@ -4735,12 +5050,12 @@ function jumpToLine() {
         return;
     }
     
-    const lineEl = document.querySelector(`.log-line[data-line="${lineNum}"]`);
+    const lineEl = document.querySelector(`#logContent .log-line[data-line="${lineNum}"]`);
     if (lineEl) {
         lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         lineEl.classList.add('highlight');
         
-        const gutterEl = document.querySelector(`.line-number[data-line="${lineNum}"]`);
+        const gutterEl = document.querySelector(`#logGutter .line-number[data-line="${lineNum}"]`);
         if (gutterEl) gutterEl.classList.add('active');
         
         setTimeout(() => {
@@ -4749,6 +5064,48 @@ function jumpToLine() {
         }, 2000);
     } else {
         showToast(`Line ${lineNum} not found in current view`, 'warning');
+    }
+}
+
+function jumpToConfigLine() {
+    const lineNum = parseInt(document.getElementById('configJumpToLine').value);
+    if (isNaN(lineNum) || lineNum < 1) {
+        showToast('Please enter a valid line number', 'warning');
+        return;
+    }
+    const cfgContent = document.getElementById('configLogContent');
+    if (state.virtualScroll && state.virtualScroll.active && state.virtualScroll.contentEl === cfgContent) {
+        const vs = state.virtualScroll;
+        const idx = vs.filteredLines.findIndex(e => e.lineNumber === lineNum);
+        if (idx >= 0) {
+            const scrollPos = idx * vs.lineHeight - vs.contentEl.clientHeight / 2;
+            vs.contentEl.scrollTop = Math.max(0, scrollPos);
+            vs.lastRenderedStart = -1;
+            updateViewerViewport();
+            requestAnimationFrame(() => {
+                const lineEl = vs.viewport.querySelector(`[data-line="${lineNum}"]`);
+                if (lineEl) {
+                    lineEl.classList.add('highlight');
+                    setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+                }
+            });
+        } else {
+            showToast(`Line ${lineNum} not found`, 'warning');
+        }
+        return;
+    }
+    const lineEl = document.querySelector(`#configLogContent .log-line[data-line="${lineNum}"]`);
+    if (lineEl) {
+        lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        lineEl.classList.add('highlight');
+        const gutterEl = document.querySelector(`#configLogGutter .line-number[data-line="${lineNum}"]`);
+        if (gutterEl) gutterEl.classList.add('active');
+        setTimeout(() => {
+            lineEl.classList.remove('highlight');
+            if (gutterEl) gutterEl.classList.remove('active');
+        }, 2000);
+    } else {
+        showToast(`Line ${lineNum} not found`, 'warning');
     }
 }
 
@@ -4794,11 +5151,16 @@ function toggleStitchMode() {
         panel.style.display = 'block';
         btn.classList.add('active');
         populateStitchFileList();
+        hideStitchLegend();
         showToast('Select files to stitch together', 'info');
     } else {
         panel.style.display = 'none';
         btn.classList.remove('active');
         state.stitchedFiles = [];
+        const cf = state.files[state.currentFileIndex];
+        if (cf && cf.isStitched && Array.isArray(cf.sourceFiles)) {
+            displayStitchLegend(cf.sourceFiles);
+        }
     }
 }
 
@@ -5653,24 +6015,47 @@ function finalizeStitchedLogDisplay(fileData, filtered, content, gutter) {
     displayStitchLegend(fileData.sourceFiles);
 }
 
-function displayStitchLegend(sourceFiles) {
-    // Remove existing legend if any
+function hideStitchLegend() {
     const existing = document.getElementById('stitchLegend');
     if (existing) existing.remove();
+}
+
+function displayStitchLegend(sourceFiles) {
+    hideStitchLegend();
     
     const legend = document.createElement('div');
     legend.id = 'stitchLegend';
     legend.className = 'stitch-legend';
     legend.innerHTML = `
-        <strong>📎 Source Files:</strong>
-        ${sourceFiles.map(fileName => {
-            const color = getFileColor(fileName);
-            return `<span class="legend-item">
+        <div class="stitch-legend-header" role="button" tabindex="0" title="Show or hide source file list" aria-expanded="true">
+            <strong>📎 Source Files</strong>
+            <span class="stitch-legend-chevron" aria-hidden="true">▼</span>
+        </div>
+        <div class="stitch-legend-items">
+            ${sourceFiles.map(fileName => {
+                const color = getFileColor(fileName);
+                return `<span class="legend-item">
                 <span class="legend-dot" style="background: ${color};"></span>
                 ${escapeHtml(fileName)}
             </span>`;
-        }).join('')}
+            }).join('')}
+        </div>
     `;
+    
+    const header = legend.querySelector('.stitch-legend-header');
+    const chevron = legend.querySelector('.stitch-legend-chevron');
+    const toggleCollapsed = () => {
+        const collapsed = legend.classList.toggle('stitch-legend-collapsed');
+        header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        if (chevron) chevron.textContent = collapsed ? '▶' : '▼';
+    };
+    header.addEventListener('click', toggleCollapsed);
+    header.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleCollapsed();
+        }
+    });
     
     const toolbar = document.querySelector('.viewer-toolbar');
     if (toolbar) {
@@ -6334,7 +6719,14 @@ function updateViewerHighlightResults() {
     ).join('');
 
     panel.style.display = '';
-    const isCollapsed = panel.classList.contains('panel-collapsed');
+    let expanded = false;
+    try {
+        expanded = localStorage.getItem('traka-viewer-hlr-expanded') === 'true';
+    } catch (e) {
+        expanded = false;
+    }
+    panel.classList.toggle('panel-collapsed', !expanded);
+    const isCollapsed = !expanded;
     panel.innerHTML = `
         <div class="hlr-header" onclick="toggleHlrPanel(this.parentElement)">
             <div class="hlr-title">
@@ -6363,6 +6755,7 @@ function updateCompareHighlightResults() {
     let grandTotal = 0;
 
     state.files.forEach((file, fileIndex) => {
+        if (file.isConfig) return;
         const matches = countHighlightMatchesForFile(file.lines, file.name, true);
         const activeMatches = matches.filter(m => m.count > 0);
         const fileTotal = activeMatches.reduce((s, m) => s + m.count, 0);
@@ -6428,7 +6821,14 @@ function updateCompareHighlightResults() {
 function toggleHlrPanel(panelEl) {
     panelEl.classList.toggle('panel-collapsed');
     const chevron = panelEl.querySelector('.hlr-panel-chevron');
-    if (chevron) chevron.classList.toggle('rotated');
+    if (chevron) chevron.classList.toggle('rotated', !panelEl.classList.contains('panel-collapsed'));
+    if (panelEl.id === 'viewerHighlightResults') {
+        try {
+            localStorage.setItem('traka-viewer-hlr-expanded', (!panelEl.classList.contains('panel-collapsed')).toString());
+        } catch (e) {
+            /* ignore */
+        }
+    }
 }
 
 function toggleHlrGroup(headerEl) {
@@ -6648,70 +7048,52 @@ function sortLogLinesByDate(lines) {
 // ============================================
 // Fullscreen Log Viewer Mode
 // ============================================
+function syncViewerFullscreenButtons(isFullscreen) {
+    const expandIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>`;
+    const shrinkIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>`;
+    ['viewerFullscreenToggleTop', 'viewerFullscreenToggleBottom'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.classList.toggle('active', isFullscreen);
+        btn.title = isFullscreen ? 'Exit fullscreen mode (ESC)' : 'Toggle fullscreen mode';
+        btn.innerHTML = isFullscreen ? shrinkIcon : expandIcon;
+    });
+}
+
 function toggleLogViewerFullscreen() {
     const viewerPage = document.getElementById('page-viewer');
-    const fullscreenBtn = document.getElementById('fullscreenToggle');
-    
     if (!viewerPage) return;
     
     if (viewerPage.classList.contains('fullscreen-mode')) {
-        // Exit fullscreen
         viewerPage.classList.remove('fullscreen-mode');
         document.body.classList.remove('fullscreen-active');
-        fullscreenBtn.classList.remove('active');
-        fullscreenBtn.title = 'Toggle fullscreen mode';
-        
-        // Update the SVG to "expand" icon
-        fullscreenBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
-            </svg>
-        `;
-        
+        syncViewerFullscreenButtons(false);
         showToast('Exited fullscreen mode', 'info');
+        requestAnimationFrame(() => {
+            if (state.currentFileIndex >= 0 && state.files[state.currentFileIndex] && !state.files[state.currentFileIndex].isConfig) {
+                displayLog(state.files[state.currentFileIndex]);
+            }
+        });
     } else {
-        // Enter fullscreen
         viewerPage.classList.add('fullscreen-mode');
         document.body.classList.add('fullscreen-active');
-        fullscreenBtn.classList.add('active');
-        fullscreenBtn.title = 'Exit fullscreen mode (ESC)';
-        
-        // Update the SVG to "minimize" icon
-        fullscreenBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
-            </svg>
-        `;
-        
+        syncViewerFullscreenButtons(true);
         showToast('Fullscreen mode enabled (press ESC to exit)', 'success');
-        
-        // Dynamically adjust log container height based on visible elements
-        setTimeout(() => {
-            adjustFullscreenLogHeight();
-        }, 50);
+        setTimeout(() => adjustFullscreenLogHeight(), 50);
     }
 }
 
-// Helper function to dynamically calculate log container height in fullscreen
+// Helper: ensure main viewer log + gutter fill the flex region in fullscreen
 function adjustFullscreenLogHeight() {
     const viewerPage = document.getElementById('page-viewer');
-    const logContainer = document.querySelector('.log-container');
-    
+    const logContainer = viewerPage?.querySelector('.log-container:not(.config-viewer-log)');
     if (!viewerPage || !logContainer || !viewerPage.classList.contains('fullscreen-mode')) {
         return;
     }
-    
-    // With flexbox layout, we don't need to manually calculate height
-    // But we can ensure scrolling works properly
     const logContent = logContainer.querySelector('.log-content');
     const logGutter = logContainer.querySelector('.log-gutter');
-    
-    if (logContent) {
-        logContent.style.height = '100%';
-    }
-    if (logGutter) {
-        logGutter.style.height = '100%';
-    }
+    if (logContent) logContent.style.height = '100%';
+    if (logGutter) logGutter.style.height = '100%';
 }
 
 // Add keyboard shortcut for fullscreen (ESC to exit)
@@ -6763,6 +7145,30 @@ function initScrollSync() {
     });
     
     // Sync content when gutter scrolls (for users who scroll on the line numbers)
+    logGutter.addEventListener('scroll', () => {
+        if (isSyncingGutter) {
+            isSyncingGutter = false;
+            return;
+        }
+        isSyncingContent = true;
+        logContent.scrollTop = logGutter.scrollTop;
+    });
+}
+
+function initConfigLogScrollSync() {
+    const logContent = document.getElementById('configLogContent');
+    const logGutter = document.getElementById('configLogGutter');
+    if (!logContent || !logGutter) return;
+    let isSyncingGutter = false;
+    let isSyncingContent = false;
+    logContent.addEventListener('scroll', () => {
+        if (isSyncingContent) {
+            isSyncingContent = false;
+            return;
+        }
+        isSyncingGutter = true;
+        logGutter.scrollTop = logContent.scrollTop;
+    });
     logGutter.addEventListener('scroll', () => {
         if (isSyncingGutter) {
             isSyncingGutter = false;
@@ -7885,6 +8291,7 @@ async function clearAllLogs() {
     // Clear all state
     state.files = [];
     state.currentFileIndex = -1;
+    state.currentConfigFileIndex = -1;
     state.parsedLogs.clear();
     state.issues = [];
     state.searchMatches = [];
@@ -7902,10 +8309,12 @@ async function clearAllLogs() {
     // Reset UI
     updateUI();
     updateFileDropdown();
+    updateConfigFileDropdown();
     updateFilesList();
     updateCompareView();
     updateIssuesUI();
     displayLog(null);
+    displayConfigFile(null);
     
     // Clear search
     const searchInput = document.getElementById('searchInput');
