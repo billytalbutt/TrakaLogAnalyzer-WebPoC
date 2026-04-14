@@ -32,6 +32,15 @@
                     </svg>
                     <span>Home</span>
                 </li>
+                <li class="nav-item" data-page="tutorial" data-tooltip="How to use">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                        <path d="M8 7h8"></path>
+                        <path d="M8 11h6"></path>
+                    </svg>
+                    <span>Tutorial</span>
+                </li>
                 <li class="nav-item" data-page="viewer" data-tooltip="Log Viewer">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -175,6 +184,17 @@
                             <span class="drop-text">Drag & drop log files here</span>
                             <span class="drop-hint">or click to browse (.log, .txt, .cfg files supported)</span>
                             <input type="file" id="homeFileInput" accept=".log,.LOG,.txt,.TXT,.cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
+                            <div class="home-clear-actions">
+                                <button type="button" class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs and config files" style="color: var(--error-color);">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                        <line x1="10" y1="11" x2="10" y2="17"></line>
+                                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                                    </svg>
+                                    Clear All
+                                </button>
+                            </div>
                             <div class="drop-zone-footer">
                                 <label class="home-issue-toggle" title="Turn off for very large logs — faster load and smoother scrolling (same idea as Render error highlighting when stitching)">
                                     <span class="home-issue-toggle__copy">
@@ -532,6 +552,15 @@
                             </svg>
                             Highlight Rules
                         </button>
+                        <button type="button" class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs and config files" style="color: var(--error-color);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                            </svg>
+                            Clear All
+                        </button>
                         <input type="file" id="configFileInput" accept=".cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
                     </div>
                 </div>
@@ -567,7 +596,7 @@
             <section class="page" id="page-compare">
                 <div class="page-header">
                     <h2>Compare Logs</h2>
-                    <p>Compare multiple log files side by side or stacked top to bottom (use Layout on the toolbar).</p>
+                    <p>Compare multiple log files side by side or stacked top to bottom (toolbar control next to Fullscreen).</p>
                 </div>
                 
                 <div class="compare-toolbar">
@@ -619,19 +648,25 @@
                             </svg>
                             Highlight Rules
                         </button>
+                        <button type="button" class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs and config files" style="color: var(--error-color);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                            </svg>
+                            Clear All
+                        </button>
                         <button class="btn btn-secondary" id="compareFullscreenToggle" onclick="toggleCompareFullscreen()" title="Toggle fullscreen mode">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
                             </svg>
                             Fullscreen
                         </button>
-                        <div class="compare-layout-picker" title="How panels share space in the compare area">
-                            <label for="compareLayoutSelect">Layout</label>
-                            <select id="compareLayoutSelect" class="file-dropdown compare-layout-select" onchange="setCompareLayout(this.value)">
-                                <option value="sideBySide">Side by side</option>
-                                <option value="stacked">Stacked (top to bottom)</option>
-                            </select>
-                        </div>
+                        <select id="compareLayoutSelect" class="file-dropdown compare-layout-select" onchange="setCompareLayout(this.value)" title="Compare panel layout: side by side or stacked top to bottom" aria-label="Compare panel layout">
+                            <option value="sideBySide">Side by side</option>
+                            <option value="stacked">Stacked (top to bottom)</option>
+                        </select>
                     </div>
                     <div class="unified-search">
                         <div class="search-box">
@@ -961,6 +996,99 @@
                             <h4>Recommendations</h4>
                             <p id="insightRecommendation">Analyze logs to get recommendations</p>
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tutorial / How to use -->
+            <section class="page" id="page-tutorial">
+                <div class="page-header">
+                    <h2>How to use Log Analyzer</h2>
+                    <p>A quick tour of loading files, each screen, and the main features.</p>
+                </div>
+
+                <div class="tutorial-shell">
+                    <div class="tutorial-lead">
+                        <p>Traka Log Analyzer opens logs and config files in your browser (or Desktop Edition). Load files once—they stay available as you move between tabs until you clear them.</p>
+                    </div>
+
+                    <div class="tutorial-card tutorial-card-accent">
+                        <h3 class="tutorial-card-title">
+                            <span class="tutorial-step-num">1</span>
+                            Loading files
+                        </h3>
+                        <ul class="tutorial-list">
+                            <li><strong>Home</strong> — Drag and drop files onto the drop zone, or click it to browse. Supported types include <code>.log</code>, <code>.txt</code>, and Traka <code>.cfg</code> / <code>.ini</code> style files.</li>
+                            <li><strong>Log Viewer, Compare, or Config</strong> — Use <strong>Load file</strong> / <strong>Add files</strong> / <strong>Load config</strong> in the toolbar on those pages.</li>
+                            <li><strong>Clear All</strong> — Available on Home, Log Viewer, Compare, and Config removes every loaded file and resets the session (you’ll be asked to confirm).</li>
+                        </ul>
+                        <p class="tutorial-note">On Desktop Edition you may also see options to scan Traka install folders or pick a custom directory.</p>
+                    </div>
+
+                    <div class="tutorial-card">
+                        <h3 class="tutorial-card-title">
+                            <span class="tutorial-step-num">2</span>
+                            What each page is for
+                        </h3>
+                        <div class="tutorial-grid">
+                            <div class="tutorial-mini">
+                                <h4>Home</h4>
+                                <p>Overview, quick load, and shortcuts into the rest of the app.</p>
+                            </div>
+                            <div class="tutorial-mini">
+                                <h4>Log Viewer</h4>
+                                <p>Read one log at a time: search, filters, date range, issues, live tail, stitch multiple logs, highlight rules, and fullscreen.</p>
+                            </div>
+                            <div class="tutorial-mini">
+                                <h4>Config</h4>
+                                <p>View <code>.cfg</code> / config-style files with syntax-friendly layout and separate highlight rules from logs.</p>
+                            </div>
+                            <div class="tutorial-mini">
+                                <h4>Compare</h4>
+                                <p>Put several logs next to each other (or stacked top-to-bottom). Sync scroll, time sync, search across panels, pop-out or minimize panels, and fullscreen.</p>
+                            </div>
+                            <div class="tutorial-mini">
+                                <h4>Issues</h4>
+                                <p>List of detected problems across loaded logs; open an issue to jump to the line in the viewer.</p>
+                            </div>
+                            <div class="tutorial-mini">
+                                <h4>Analytics</h4>
+                                <p>Charts and summaries when issues have been analyzed.</p>
+                            </div>
+                            <div class="tutorial-mini">
+                                <h4>FAQs</h4>
+                                <p>Browse known Traka issues and fixes from the knowledge base.</p>
+                            </div>
+                            <div class="tutorial-mini">
+                                <h4>Settings</h4>
+                                <p>Detection options, appearance, and behaviour preferences.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tutorial-card">
+                        <h3 class="tutorial-card-title">
+                            <span class="tutorial-step-num">3</span>
+                            Features worth knowing
+                        </h3>
+                        <ul class="tutorial-list tutorial-list-compact">
+                            <li><strong>Search</strong> — Find text in the viewer; on Compare, search runs across all open logs.</li>
+                            <li><strong>Highlight rules</strong> — Colour matching text in logs (and a separate set on the Config page).</li>
+                            <li><strong>Stitch files</strong> — Merge selected logs by timestamp in Log Viewer.</li>
+                            <li><strong>Live tail</strong> — Watch files grow as new lines are written (where supported).</li>
+                            <li><strong>Time sync</strong> — On Compare, line up the same moment in time across files.</li>
+                            <li><strong>Compare layout</strong> — Toolbar dropdown next to Fullscreen: side-by-side or stacked rows.</li>
+                        </ul>
+                    </div>
+
+                    <div class="tutorial-footer-cta">
+                        <button type="button" class="btn btn-primary" onclick="navigateTo('home')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px;">
+                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                                <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                            </svg>
+                            Go to Home
+                        </button>
                     </div>
                 </div>
             </section>

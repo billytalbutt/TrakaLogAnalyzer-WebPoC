@@ -8570,6 +8570,13 @@ async function clearAllLogs() {
         comms: false,
         integration: false
     };
+
+    state.compareLayout = 'sideBySide';
+    try {
+        localStorage.setItem('traka-compare-layout', 'sideBySide');
+    } catch (e) {
+        /* ignore */
+    }
     
     // Reset UI
     updateUI();

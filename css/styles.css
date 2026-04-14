@@ -505,6 +505,13 @@ body {
     color: var(--text-tertiary);
 }
 
+.home-clear-actions {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    margin-top: 1rem;
+}
+
 /* Issue scan toggle — inside drop zone, centered, no extra card */
 .drop-zone-footer {
     width: 100%;
@@ -1807,23 +1814,12 @@ mark.compare-search-hl {
     align-items: center;
 }
 
-.compare-layout-picker {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-shrink: 0;
-}
-
-.compare-layout-picker label {
-    font-size: 0.8125rem;
-    color: var(--text-secondary);
-    white-space: nowrap;
-    margin: 0;
-}
-
+/* Compare layout dropdown (no label — sits next to Fullscreen in toolbar) */
 .compare-layout-select {
     min-width: 11.5rem;
+    max-width: 14rem;
     padding: 0.4rem 0.6rem;
+    flex-shrink: 0;
 }
 
 .unified-search {
@@ -2017,6 +2013,143 @@ mark.compare-search-hl {
     font-size: 1.125rem;
     color: var(--text-secondary);
     margin-bottom: 0.5rem;
+}
+
+/* ============================================
+   Tutorial page
+   ============================================ */
+.tutorial-shell {
+    max-width: 52rem;
+    margin: 0 auto;
+    padding: 0 0 2.5rem;
+}
+
+.tutorial-lead {
+    font-size: 1.0625rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+    margin-bottom: 1.75rem;
+    padding: 1.25rem 1.5rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+}
+
+.tutorial-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1.25rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.tutorial-card-accent {
+    border-color: rgba(255, 107, 53, 0.35);
+    box-shadow: 0 0 0 1px rgba(255, 107, 53, 0.08), var(--shadow-sm);
+}
+
+.tutorial-card-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 1rem;
+    letter-spacing: -0.02em;
+}
+
+.tutorial-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--radius-md);
+    background: var(--accent-primary-light);
+    color: var(--accent-primary);
+    font-size: 0.9375rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.tutorial-list {
+    margin: 0;
+    padding-left: 1.25rem;
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+    line-height: 1.65;
+}
+
+.tutorial-list li {
+    margin-bottom: 0.65rem;
+}
+
+.tutorial-list li:last-child {
+    margin-bottom: 0;
+}
+
+.tutorial-list code {
+    font-family: var(--font-mono);
+    font-size: 0.84em;
+    padding: 0.1em 0.35em;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+}
+
+.tutorial-list-compact li {
+    margin-bottom: 0.45rem;
+}
+
+.tutorial-note {
+    margin: 1rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-tertiary);
+    font-style: italic;
+    border-top: 1px solid var(--border-light);
+    padding-top: 1rem;
+}
+
+.tutorial-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
+    gap: 1rem;
+}
+
+.tutorial-mini {
+    padding: 1rem 1.125rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.tutorial-mini:hover {
+    border-color: rgba(255, 107, 53, 0.25);
+    background: var(--bg-elevated);
+}
+
+.tutorial-mini h4 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+    margin: 0 0 0.4rem;
+}
+
+.tutorial-mini p {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.55;
+}
+
+.tutorial-footer-cta {
+    display: flex;
+    justify-content: center;
+    margin-top: 2rem;
+    padding-top: 0.5rem;
 }
 
 /* ============================================
