@@ -58,7 +58,7 @@
                         <line x1="9" y1="15" x2="15" y2="15"></line>
                         <line x1="12" y1="12" x2="12" y2="18"></line>
                     </svg>
-                    <span>Config</span>
+                    <span>Config Viewer</span>
                 </li>
                 <li class="nav-item" data-page="compare" data-tooltip="Compare">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -561,33 +561,55 @@
                             </svg>
                             Clear All
                         </button>
+                        <select id="configViewModeSelect" class="file-dropdown config-view-mode-select" onchange="setConfigViewMode(this.value)" title="Single file: one config at a time. Multi-view: all loaded configs like Compare (side by side or stacked)." aria-label="Config view mode">
+                            <option value="single">Single file</option>
+                            <option value="multi">Multi-view</option>
+                        </select>
+                        <select id="configMultiLayoutSelect" class="file-dropdown compare-layout-select" style="display: none;" onchange="setConfigMultiLayout(this.value)" title="Layout when Multi-view is on: columns or rows" aria-label="Config multi-view layout">
+                            <option value="sideBySide">Side by side</option>
+                            <option value="stacked">Stacked (top to bottom)</option>
+                        </select>
+                        <button type="button" class="btn btn-secondary" id="configHighlightDiffBtn" style="display: none;" onclick="highlightDifferencesConfigMulti()" title="Highlight lines unique to one config vs the others (config files only; does not use Compare or log panels)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 3v18"></path>
+                                <path d="M5 10l7-7 7 7"></path>
+                            </svg>
+                            Highlight Differences
+                        </button>
                         <input type="file" id="configFileInput" accept=".cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
                     </div>
                 </div>
-                <div class="log-container config-viewer-log">
-                    <div class="log-gutter" id="configLogGutter"></div>
-                    <div class="log-content" id="configLogContent">
-                        <div class="empty-state">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                                <polyline points="14 2 14 8 20 8"></polyline>
-                            </svg>
-                            <p>No config file loaded</p>
-                            <span>Load a .cfg from Home, Log Viewer, or use Load config here. Log files are unchanged.</span>
+                <div class="config-view-area">
+                    <div id="configSingleViewHost" class="config-single-view-host">
+                        <div class="log-container config-viewer-log">
+                            <div class="log-gutter" id="configLogGutter"></div>
+                            <div class="log-content" id="configLogContent">
+                                <div class="empty-state">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                    </svg>
+                                    <p>No config file loaded</p>
+                                    <span>Load a .cfg from Home, Log Viewer, or use Load config here. Log files are unchanged.</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="highlight-results-panel" id="configHighlightResults" style="display: none;"></div>
+                        <div class="viewer-footer config-viewer-footer">
+                            <div class="viewer-footer-info">
+                                <span id="configViewerStats">No file loaded</span>
+                            </div>
+                            <div class="footer-controls">
+                                <div class="jump-to-line">
+                                    <label>Go to line:</label>
+                                    <input type="number" id="configJumpToLine" min="1" placeholder="#">
+                                    <button class="btn btn-small btn-secondary" onclick="jumpToConfigLine()">Go</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="highlight-results-panel" id="configHighlightResults" style="display: none;"></div>
-                <div class="viewer-footer config-viewer-footer">
-                    <div class="viewer-footer-info">
-                        <span id="configViewerStats">No file loaded</span>
-                    </div>
-                    <div class="footer-controls">
-                        <div class="jump-to-line">
-                            <label>Go to line:</label>
-                            <input type="number" id="configJumpToLine" min="1" placeholder="#">
-                            <button class="btn btn-small btn-secondary" onclick="jumpToConfigLine()">Go</button>
-                        </div>
+                    <div id="configMultiViewHost" class="config-multi-host" aria-hidden="true">
+                        <div class="compare-container" id="configMultiContainer"></div>
                     </div>
                 </div>
             </section>
@@ -1009,7 +1031,7 @@
 
                 <div class="tutorial-shell">
                     <div class="tutorial-lead">
-                        <p><strong>Session model.</strong> Files you load stay in memory as you switch sidebar tabs (Home, Log Viewer, Compare, and so on). Log files power the viewer, compare, and issues; config files open on the <strong>Config</strong> tab. Use <strong>Clear All</strong> on Home, Log Viewer, Compare, or Config when you want a clean slate.</p>
+                        <p><strong>Session model.</strong> Files you load stay in memory as you switch sidebar tabs (Home, <strong>Log Viewer</strong>, <strong>Config Viewer</strong>, <strong>Compare</strong>, and so on). Log files power Log Viewer, Compare, and Issues. Config files (e.g. <code>.cfg</code>) open on <strong>Config Viewer</strong> — you can keep customer logs and configs in the same session and work on each in the right place without one overwriting the other’s tools.</p>
                         <p style="margin-top: 0.75rem;"><strong>Desktop Edition</strong> adds directory scan and “pop out” compare panels to separate windows where supported.</p>
                     </div>
 
@@ -1020,12 +1042,12 @@
                         </h3>
                         <ul class="tutorial-list">
                             <li><strong>Home</strong> — Drag and drop onto the drop zone, or click to browse. Optional toggle controls whether issues are scanned on load (large logs load faster with scanning off).</li>
-                            <li><strong>Log Viewer</strong> — <strong>Load File</strong> adds logs (and configs, which then appear on Config too).</li>
-                            <li><strong>Compare</strong> — <strong>Add Files</strong> adds multiple logs and sorts them for side‑by‑side or stacked review.</li>
-                            <li><strong>Config</strong> — <strong>Load config</strong> focuses on <code>.cfg</code>, <code>.ini</code>, and similar files.</li>
+                            <li><strong>Log Viewer</strong> — <strong>Load File</strong> adds logs (and configs, which then appear on Config Viewer too).</li>
+                            <li><strong>Compare</strong> — <strong>Add Files</strong> loads <strong>log</strong> files into compare panels (sorted for side‑by‑side or stacked review). Use <strong>Highlight Differences</strong> here for logs only.</li>
+                            <li><strong>Config Viewer</strong> — <strong>Load config</strong> for <code>.cfg</code>, <code>.ini</code>, and similar. Use <strong>Single file</strong> vs <strong>Multi-view</strong> and, in multi-view with two or more configs, <strong>Highlight Differences</strong> for configs only (separate from Compare).</li>
                             <li><strong>Formats</strong> — Typically <code>.log</code>, <code>.txt</code>, plus config extensions above.</li>
                         </ul>
-                        <p class="tutorial-note">After <strong>Clear All</strong>, compare layout resets to side‑by‑side. Electron users may see <strong>Scan Traka Directories</strong> and related actions on Home.</p>
+                        <p class="tutorial-note">After <strong>Clear All</strong>, Compare’s layout resets to side‑by‑side. Config Viewer remembers its own <strong>multi-view layout</strong> (side by side vs stacked) and <strong>view mode</strong> (single vs multi) in the browser. Electron users may see <strong>Scan Traka Directories</strong> and related actions on Home.</p>
                     </div>
 
                     <div class="tutorial-card" id="tutorial-pages">
@@ -1046,13 +1068,13 @@
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-config">
-                                <h4>Config</h4>
-                                <p>Syntax‑friendly config view with its own highlight rules and Clear All.</p>
+                                <h4>Config Viewer</h4>
+                                <p>Single vs multi‑panel configs, saved layout, config‑only highlight rules, optional Highlight Differences (multi‑view), Clear All.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-compare">
                                 <h4>Compare</h4>
-                                <p>Multiple logs: layout, sync scroll, time sync, search, pop‑out / minimize / maximize.</p>
+                                <p>Multiple <strong>logs</strong>: layout, sync scroll, time sync, search, Highlight Differences (logs), pop‑out / minimize / maximize.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-issues">
@@ -1128,34 +1150,39 @@
 
                     <article class="tutorial-detail" id="tutorial-page-config">
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
-                        <h3 class="tutorial-detail-title">Config viewer</h3>
-                        <p class="tutorial-detail-lead">Read <code>.cfg</code> / <code>.ini</code> style files with highlighting suited to sections and key=value lines.</p>
+                        <h3 class="tutorial-detail-title">Config Viewer</h3>
+                        <p class="tutorial-detail-lead">Dedicated place for <code>.cfg</code> / <code>.ini</code> style files: syntax-friendly view, config-only highlight rules, and optional multi-panel comparison — independent of Log Viewer and Compare.</p>
                         <h4 class="tutorial-detail-sub">Toolbar & actions</h4>
                         <ul class="tutorial-list">
-                            <li><strong>Config file dropdown</strong> — Choose which loaded config file is shown.</li>
-                            <li><strong>Load config</strong> — Add configs without leaving this tab.</li>
-                            <li><strong>Highlight Rules</strong> — Separate rule list from Log Viewer; only affects this page.</li>
-                            <li><strong>Clear All</strong> — Clears logs and configs everywhere after confirmation.</li>
+                            <li><strong>View mode</strong> — Dropdown: <strong>Single file</strong> (one config at a time via the file dropdown) or <strong>Multi-view</strong> (every loaded config in its own panel, Compare-style). Your choice is remembered for next time.</li>
+                            <li><strong>Layout</strong> (multi-view only) — Dropdown next to view mode: <strong>Side by side</strong> or <strong>Stacked (top to bottom)</strong>. Saved separately from Compare’s layout so changing one does not change the other.</li>
+                            <li><strong>Highlight Differences</strong> (multi-view, when you have <strong>two or more</strong> configs) — Same workflow as Compare (short info dialog, then red/blue line highlights and a statistics summary). It only looks at <strong>config files in this view</strong>; it does not use log files or Compare panels. “Don’t show this again” for that dialog is stored only for Config Viewer.</li>
+                            <li><strong>Config file dropdown</strong> — Primary in single file mode (slightly de-emphasised in multi-view). Changing it still sets which config is “selected” for when you return to single file.</li>
+                            <li><strong>Load config</strong> — Add more configs without leaving this tab.</li>
+                            <li><strong>Highlight Rules</strong> — Custom patterns for configs only (not the same list as Log Viewer / Compare).</li>
+                            <li><strong>Clear All</strong> — Clears the whole session (logs and configs) after confirmation, same as on other pages.</li>
                         </ul>
-                        <h4 class="tutorial-detail-sub">View</h4>
+                        <h4 class="tutorial-detail-sub">View & panels</h4>
                         <ul class="tutorial-list">
-                            <li><strong>Syntax styling</strong> — Sections, comments, and keys are visually distinct.</li>
-                            <li><strong>Go to line</strong> — Same idea as the log viewer footer control.</li>
-                            <li><strong>Highlight results</strong> — Appears when config highlight rules match lines.</li>
+                            <li><strong>Syntax styling</strong> — Sections, comments, and key=value lines are visually distinct.</li>
+                            <li><strong>Go to line</strong> — Single file mode only (footer); use single mode if you need to jump by line number.</li>
+                            <li><strong>Highlight results</strong> — Collapsible panel in single file mode when config highlight rules match lines (hidden in multi-view).</li>
+                            <li><strong>Multi-view panels</strong> — Virtual scrolling like Compare; <strong>Maximize</strong> one panel for focus (click again or <strong>Esc</strong> to restore); <strong>Remove</strong> drops that file from the session. Footer “Go to line” is not used in multi-view.</li>
+                            <li><strong>Clear Highlights</strong> (after config Highlight Differences) — Removes red/blue diff styling from config multi-view only; Compare and logs are unchanged.</li>
                         </ul>
                     </article>
 
                     <article class="tutorial-detail" id="tutorial-page-compare">
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Compare</h3>
-                        <p class="tutorial-detail-lead">Line up several logs with shared scrolling, search, and layout options.</p>
+                        <p class="tutorial-detail-lead">Line up several <strong>log</strong> files with shared scrolling, search, and layout options. (Configs belong on <strong>Config Viewer</strong>, including multi-view and config-only Highlight Differences.)</p>
                         <h4 class="tutorial-detail-sub">Toolbar</h4>
                         <ul class="tutorial-list">
                             <li><strong>Add Files</strong> — Load multiple logs into compare panels.</li>
                             <li><strong>Live Tail</strong> — Applies across visible panels where supported.</li>
                             <li><strong>Sync Scroll</strong> — Keeps panels aligned when you scroll.</li>
                             <li><strong>Time Sync</strong> — Aligns lines around the same timestamp across files.</li>
-                            <li><strong>Highlight Differences</strong> — Visual compare assist (see on‑screen legend when used).</li>
+                            <li><strong>Highlight Differences</strong> — For <strong>log panels in Compare only</strong>; needs at least two logs. Short info dialog (with its own “don’t show again”), then highlights unique vs shared trimmed lines and opens a summary. <strong>Clear Highlights</strong> in that summary clears styling inside Compare only — not Config Viewer.</li>
                             <li><strong>Highlight Rules</strong> — Same rule set as Log Viewer / compare context.</li>
                             <li><strong>Clear All</strong> — Session reset with confirmation.</li>
                             <li><strong>Fullscreen</strong> — Uses the whole window for compare.</li>

@@ -391,17 +391,66 @@ body {
 #page-viewer.active > .viewer-footer,
 #page-viewer.active > .highlight-results-panel,
 #page-config.active > .page-header,
-#page-config.active > .config-viewer-toolbar,
-#page-config.active > .highlight-results-panel,
-#page-config.active > .config-viewer-footer {
+#page-config.active > .config-viewer-toolbar {
+    flex-shrink: 0;
+}
+
+#page-config.active > .config-view-area .highlight-results-panel,
+#page-config.active > .config-view-area .config-viewer-footer {
     flex-shrink: 0;
 }
 
 #page-viewer.active > .log-container,
-#page-config.active > .log-container.config-viewer-log {
+#page-config.active .config-view-area .log-container.config-viewer-log {
     flex: 1 1 auto;
     min-height: 0;
     height: auto !important;
+}
+
+/* Config page: single vs multi host fills space under toolbar */
+#page-config.active > .config-view-area {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.config-single-view-host {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#page-config.config-view-multi .config-single-view-host {
+    display: none;
+}
+
+.config-multi-host {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#page-config.config-view-multi .config-multi-host {
+    display: flex;
+}
+
+#page-config.config-view-multi #configMultiContainer {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+#page-config.config-view-multi .file-selector {
+    opacity: 0.72;
+}
+
+#page-config.config-view-multi .file-selector label {
+    color: var(--text-secondary);
 }
 
 @keyframes fadeIn {
@@ -963,6 +1012,8 @@ body {
 
 .toolbar-actions {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 0.75rem;
 }
 
@@ -3275,7 +3326,8 @@ a.tutorial-mini-link:focus-visible {
 /* ============================================
    Diff Info Dialog (shown before highlighting)
    ============================================ */
-.diff-info-overlay {
+.diff-info-overlay,
+.config-diff-info-overlay {
     position: fixed;
     top: 0;
     left: 0;
@@ -3462,7 +3514,8 @@ a.tutorial-mini-link:focus-visible {
 /* ============================================
    Diff Summary Panel
    ============================================ */
-.diff-summary-overlay {
+.diff-summary-overlay,
+.config-diff-summary-overlay {
     position: fixed;
     top: 0;
     left: 0;

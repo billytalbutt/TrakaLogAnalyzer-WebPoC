@@ -924,6 +924,14 @@ const state = {
     compareVirtualScroll: null,
     /** Index into state.files for the selected config on the Config viewer page */
     currentConfigFileIndex: -1,
+    /** Config page: one file at a time vs all configs in compare-style panels */
+    configViewMode: 'single',
+    /** Config multi-view layout (separate from compareLayout / localStorage) */
+    configMultiLayout: 'sideBySide',
+    configMultiVirtualScroll: null,
+    /** Config multi-view only: trim-line sets for Highlight Differences (parallel to config panels) */
+    configMultiDiffSets: null,
+    configMultiDiffHighlightActive: false,
     settings: {
         detectErrors: true,
         detectExceptions: true,
@@ -1080,6 +1088,8 @@ function initializeApp() {
         loadHighlightRules(); // Load saved highlight rules
         loadConfigHighlightRules();
         loadCompareLayout();
+        loadConfigViewMode();
+        loadConfigMultiLayout();
         
         console.log('  ✓ Updating UI...');
         updateUI();
@@ -2227,6 +2237,13 @@ function formatConfigLineInnerHtml(entry, fileName) {
  * Render a loaded .cfg / .ini / .config in the Config viewer (separate DOM from Log Viewer).
  */
 function displayConfigFile(fileData) {
+    syncConfigPageViewModeControls();
+    if (state.configViewMode === 'multi') {
+        cleanupViewerVirtualScroll();
+        renderConfigMultiView();
+        return;
+    }
+
     const gutter = document.getElementById('configLogGutter');
     const content = document.getElementById('configLogContent');
     if (!gutter || !content) return;
@@ -2276,6 +2293,723 @@ function displayConfigFile(fileData) {
     }
 
     updateConfigHighlightResults();
+}
+
+// ============================================
+// Config page: single file vs multi-view (compare-style panels)
+// ============================================
+
+function loadConfigViewMode() {
+    try {
+        const v = localStorage.getItem('traka-config-view-mode');
+        if (v === 'single' || v === 'multi') {
+            state.configViewMode = v;
+        }
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function loadConfigMultiLayout() {
+    try {
+        const v = localStorage.getItem('traka-config-multi-layout');
+        if (v === 'stacked' || v === 'sideBySide') {
+            state.configMultiLayout = v;
+        }
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function saveConfigMultiLayout() {
+    try {
+        localStorage.setItem('traka-config-multi-layout', state.configMultiLayout);
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function syncConfigPageViewModeControls() {
+    const page = document.getElementById('page-config');
+    if (page) {
+        page.classList.toggle('config-view-multi', state.configViewMode === 'multi');
+    }
+    const modeSel = document.getElementById('configViewModeSelect');
+    if (modeSel) {
+        modeSel.value = state.configViewMode;
+    }
+    const layoutSel = document.getElementById('configMultiLayoutSelect');
+    if (layoutSel) {
+        layoutSel.value = state.configMultiLayout;
+        layoutSel.style.display = state.configViewMode === 'multi' ? '' : 'none';
+    }
+    const multiHost = document.getElementById('configMultiViewHost');
+    const singleHost = document.getElementById('configSingleViewHost');
+    if (multiHost) {
+        multiHost.setAttribute('aria-hidden', state.configViewMode === 'single' ? 'true' : 'false');
+    }
+    if (singleHost) {
+        singleHost.setAttribute('aria-hidden', state.configViewMode === 'multi' ? 'true' : 'false');
+    }
+    const diffBtn = document.getElementById('configHighlightDiffBtn');
+    if (diffBtn) {
+        const cfgCount = state.files.filter(f => f.isConfig).length;
+        const showDiff = state.configViewMode === 'multi' && cfgCount >= 2;
+        diffBtn.style.display = showDiff ? '' : 'none';
+        if (!showDiff) {
+            diffBtn.classList.remove('active');
+        }
+    }
+}
+
+function setConfigViewMode(mode) {
+    if (mode !== 'single' && mode !== 'multi') {
+        return;
+    }
+    state.configViewMode = mode;
+    try {
+        localStorage.setItem('traka-config-view-mode', mode);
+    } catch (e) {
+        /* ignore */
+    }
+    syncConfigPageViewModeControls();
+    if (mode === 'multi') {
+        cleanupViewerVirtualScroll();
+        renderConfigMultiView();
+    } else {
+        resetConfigMultiDiffHighlightsForReload();
+        cleanupConfigMultiVirtualScroll();
+        const cc = document.getElementById('configMultiContainer');
+        if (cc) {
+            cc.innerHTML = '';
+        }
+        const cfg = state.files[state.currentConfigFileIndex]?.isConfig
+            ? state.files[state.currentConfigFileIndex]
+            : state.files.find(f => f.isConfig);
+        displayConfigFile(cfg || null);
+    }
+}
+
+function applyConfigMultiLayoutToDom() {
+    const container = document.getElementById('configMultiContainer');
+    const sel = document.getElementById('configMultiLayoutSelect');
+    if (sel) {
+        sel.value = state.configMultiLayout;
+    }
+    const stacked = state.configMultiLayout === 'stacked';
+    if (container) {
+        container.classList.toggle('compare-layout-stacked', stacked);
+    }
+}
+
+function setConfigMultiLayout(layout) {
+    if (layout !== 'stacked' && layout !== 'sideBySide') {
+        return;
+    }
+    state.configMultiLayout = layout;
+    saveConfigMultiLayout();
+    applyConfigMultiLayoutToDom();
+    requestAnimationFrame(() => {
+        refreshConfigMultiVirtualScrollLayout();
+    });
+    showToast(
+        layout === 'stacked' ? 'Config layout: stacked (top to bottom)' : 'Config layout: side by side',
+        'info'
+    );
+}
+
+function cleanupConfigMultiVirtualScroll() {
+    state.configMultiVirtualScroll = null;
+}
+
+function refreshConfigMultiVirtualScrollLayout() {
+    if (!state.configMultiVirtualScroll) {
+        return;
+    }
+    state.configMultiVirtualScroll.forEach((vs, idx) => {
+        if (vs) {
+            vs.lastRenderedStart = -1;
+            vs.lastRenderedEnd = -1;
+            updateConfigMultiPanelViewport(idx, true);
+        }
+    });
+}
+
+function renderConfigMultiView() {
+    syncConfigPageViewModeControls();
+    resetConfigMultiDiffHighlightsForReload();
+    cleanupViewerVirtualScroll();
+    const container = document.getElementById('configMultiContainer');
+    if (!container) {
+        return;
+    }
+
+    const configFiles = state.files.filter(f => f.isConfig);
+
+    if (configFiles.length === 0) {
+        cleanupConfigMultiVirtualScroll();
+        container.removeAttribute('data-file-count');
+        container.innerHTML = `
+            <div class="compare-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <p class="drop-title">No config files loaded</p>
+                <span class="drop-instruction">Load .cfg, .ini, or .config files from Home, Log Viewer, or use <strong>Load config</strong> above.</span>
+            </div>
+        `;
+        applyConfigMultiLayoutToDom();
+        const st = document.getElementById('configViewerStats');
+        if (st) {
+            st.textContent = 'No file loaded';
+        }
+        updateConfigHighlightResults();
+        return;
+    }
+
+    container.setAttribute('data-file-count', String(configFiles.length));
+    container.style.setProperty('--file-count', String(configFiles.length));
+
+    const panelsHtml = configFiles.map((file, panelIndex) => {
+        const index = state.files.indexOf(file);
+        if (!state.parsedLogs.has(file.name)) {
+            parseLogFile(file);
+        }
+        let filteredLines = [...(state.parsedLogs.get(file.name) || [])];
+        filteredLines = sortLogLinesByDate(filteredLines);
+        const lineCount = filteredLines.length;
+        const shortLabel = getShortLabel(file);
+        const originalFile = file.originalName || file.name;
+        return `
+        <div class="compare-panel" data-index="${index}">
+            <div class="compare-panel-header">
+                <div class="compare-panel-title-group">
+                    <h4 title="${escapeHtml(file.path || originalFile)}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                        <span class="panel-title-text">${escapeHtml(shortLabel)}</span>
+                    </h4>
+                    <div class="file-badge">${lineCount.toLocaleString()} lines &middot; ${formatFileSize(file.size)}</div>
+                </div>
+                <div class="compare-panel-actions">
+                    <button class="btn-icon panel-maximize-btn" onclick="toggleConfigMultiMaximize(${index})" title="Maximize this panel">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" onclick="removeFile(${index})" title="Remove file">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="compare-panel-content virtual-scroll-mode" data-panel-index="${panelIndex}">
+                <div class="virtual-scroll-spacer" style="height: ${lineCount * 20}px; position: relative;">
+                    <div class="virtual-scroll-viewport" style="position: absolute; left: 0; right: 0; will-change: transform;"></div>
+                </div>
+            </div>
+        </div>
+    `;
+    }).join('');
+
+    container.innerHTML = panelsHtml;
+    initConfigMultiVirtualScroll(container, configFiles);
+    applyConfigMultiLayoutToDom();
+    requestAnimationFrame(() => {
+        refreshConfigMultiVirtualScrollLayout();
+    });
+
+    const totalLines = configFiles.reduce((s, f) => s + f.lines.length, 0);
+    const st = document.getElementById('configViewerStats');
+    if (st) {
+        st.textContent =
+            configFiles.length === 1
+                ? `1 file · ${totalLines.toLocaleString()} lines`
+                : `${configFiles.length} files · ${totalLines.toLocaleString()} lines`;
+    }
+    updateConfigHighlightResults();
+}
+
+function initConfigMultiVirtualScroll(container, configFiles) {
+    cleanupConfigMultiVirtualScroll();
+
+    const lineHeight = 20;
+    const OVERSCAN = 150;
+    state.configMultiVirtualScroll = configFiles.map((file, panelIndex) => {
+        if (!state.parsedLogs.has(file.name)) {
+            parseLogFile(file);
+        }
+        let filteredLines = [...(state.parsedLogs.get(file.name) || [])];
+        filteredLines = sortLogLinesByDate(filteredLines);
+
+        const panelContent = container.querySelector(`[data-panel-index="${panelIndex}"]`);
+        if (!panelContent) {
+            return null;
+        }
+        const viewport = panelContent.querySelector('.virtual-scroll-viewport');
+        const globalIndex = state.files.indexOf(file);
+
+        const vsState = {
+            file,
+            filteredLines,
+            panelContent,
+            viewport,
+            lineHeight,
+            overscan: OVERSCAN,
+            lastRenderedStart: -1,
+            lastRenderedEnd: -1,
+            fileIndex: globalIndex
+        };
+
+        panelContent.addEventListener(
+            'scroll',
+            () => {
+                updateConfigMultiPanelViewport(panelIndex);
+            },
+            { passive: true }
+        );
+
+        updateConfigMultiPanelViewport(panelIndex, true);
+        return vsState;
+    });
+
+    requestAnimationFrame(() => {
+        if (!state.configMultiVirtualScroll) {
+            return;
+        }
+        state.configMultiVirtualScroll.forEach((vs, idx) => {
+            if (vs) {
+                vs.lastRenderedStart = -1;
+                vs.lastRenderedEnd = -1;
+                updateConfigMultiPanelViewport(idx, true);
+            }
+        });
+    });
+}
+
+function updateConfigMultiPanelViewport(index, force) {
+    const cms = state.configMultiVirtualScroll;
+    if (!cms || !cms[index]) {
+        return;
+    }
+
+    const vs = cms[index];
+    const scrollTop = vs.panelContent.scrollTop;
+    const clientHeight = vs.panelContent.clientHeight || 600;
+
+    const visibleStart = Math.floor(scrollTop / vs.lineHeight);
+    const visibleEnd = Math.ceil((scrollTop + clientHeight) / vs.lineHeight);
+
+    if (!force && vs.lastRenderedStart >= 0) {
+        const safeTop = vs.lastRenderedStart + vs.overscan * 0.4;
+        const safeBot = vs.lastRenderedEnd - vs.overscan * 0.4;
+        if (visibleStart >= safeTop && visibleEnd <= safeBot) {
+            return;
+        }
+    }
+
+    const fl = vs.filteredLines;
+    const startIdx = Math.max(0, visibleStart - vs.overscan);
+    const endIdx = Math.min(fl.length, visibleEnd + vs.overscan);
+
+    vs.lastRenderedStart = startIdx;
+    vs.lastRenderedEnd = endIdx;
+
+    const html = [];
+    const fileName = vs.file.name;
+    const panelIdx = index;
+    const diffActive =
+        state.configMultiDiffHighlightActive &&
+        state.configMultiDiffSets &&
+        state.configMultiDiffSets.length > panelIdx;
+
+    for (let i = startIdx; i < endIdx; i++) {
+        const entry = fl[i];
+        const inner = formatConfigLineInnerHtml(entry, fileName);
+        let diffClass = '';
+        if (diffActive) {
+            const rawTrim = String(entry.raw || '').trim();
+            if (rawTrim) {
+                const others = state.configMultiDiffSets.filter((_, j) => j !== panelIdx);
+                const isUnique = !others.some(s => s.has(rawTrim));
+                diffClass = isUnique ? ' highlight-unique' : ' highlight-common';
+            }
+        }
+        html.push(
+            `<div class="log-line config-line${diffClass}" data-line="${entry.lineNumber}">${inner || '&nbsp;'}</div>`
+        );
+    }
+
+    vs.viewport.innerHTML = html.join('');
+    vs.viewport.style.transform = `translateY(${startIdx * vs.lineHeight}px)`;
+}
+
+function toggleConfigMultiMaximize(fileIndex) {
+    const container = document.getElementById('configMultiContainer');
+    if (!container) {
+        return;
+    }
+    const panels = container.querySelectorAll('.compare-panel');
+    const targetPanel = container.querySelector(`.compare-panel[data-index="${fileIndex}"]`);
+    if (!targetPanel) {
+        return;
+    }
+
+    const isMaximized = targetPanel.classList.contains('panel-maximized');
+
+    if (isMaximized) {
+        restoreConfigMultiMaximized();
+    } else {
+        container.classList.add('has-maximized-panel');
+
+        panels.forEach(panel => {
+            const idx = parseInt(panel.getAttribute('data-index'), 10);
+            if (idx === fileIndex) {
+                panel.classList.add('panel-maximized');
+                const btn = panel.querySelector('.panel-maximize-btn');
+                if (btn) {
+                    btn.innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
+                        </svg>
+                    `;
+                    btn.title = 'Restore panel (ESC)';
+                }
+            } else {
+                panel.classList.add('panel-hidden');
+            }
+        });
+        requestAnimationFrame(() => {
+            refreshConfigMultiVirtualScrollLayout();
+        });
+    }
+}
+
+function restoreConfigMultiMaximized() {
+    const container = document.getElementById('configMultiContainer');
+    if (!container) {
+        return;
+    }
+    container.classList.remove('has-maximized-panel');
+    container.querySelectorAll('.compare-panel').forEach(panel => {
+        panel.classList.remove('panel-maximized', 'panel-hidden');
+        const btn = panel.querySelector('.panel-maximize-btn');
+        if (btn) {
+            btn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                </svg>
+            `;
+            btn.title = 'Maximize this panel';
+        }
+    });
+    requestAnimationFrame(() => {
+        refreshConfigMultiVirtualScrollLayout();
+    });
+}
+
+function resetConfigMultiDiffHighlightsForReload() {
+    closeConfigDiffSummary();
+    const infoOv = document.querySelector('.config-diff-info-overlay');
+    if (infoOv) {
+        infoOv.remove();
+    }
+    state.configMultiDiffHighlightActive = false;
+    state.configMultiDiffSets = null;
+    const diffBtn = document.getElementById('configHighlightDiffBtn');
+    if (diffBtn) {
+        diffBtn.classList.remove('active');
+    }
+}
+
+/**
+ * Highlight Differences for loaded config files only (Config Viewer → Multi-view).
+ * Independent from Compare / log files and from the shared diff-info skip for logs.
+ */
+function highlightDifferencesConfigMulti() {
+    if (state.configViewMode !== 'multi') {
+        showToast('Switch to multi-view to compare configs', 'info');
+        return;
+    }
+    const configFiles = state.files.filter(f => f.isConfig);
+    if (configFiles.length < 2) {
+        showToast('Need at least 2 config files to compare', 'warning');
+        return;
+    }
+    showConfigDiffInfoDialog(configFiles.length);
+}
+
+function showConfigDiffInfoDialog(configFileCount) {
+    const existing = document.querySelector('.config-diff-info-overlay');
+    if (existing) {
+        existing.remove();
+    }
+
+    const dialogHTML = `
+        <div class="config-diff-info-overlay" onclick="closeConfigDiffInfoDialog()">
+            <div class="diff-info-dialog" onclick="event.stopPropagation()">
+                <div class="diff-info-header">
+                    <div class="diff-info-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 16v-4"></path>
+                            <path d="M12 8h.01"></path>
+                        </svg>
+                    </div>
+                    <h3>Compare config files</h3>
+                    <button class="btn-icon" onclick="closeConfigDiffInfoDialog()" title="Close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="diff-info-body">
+                    <p class="diff-info-lead">
+                        This runs only on <strong>loaded config files</strong> in multi-view here. It does not use log files or the Compare page — you can keep logs loaded for analysis elsewhere without affecting this result.
+                    </p>
+                    <div class="diff-info-examples">
+                        <div class="diff-info-good">
+                            <div class="diff-info-example-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                                <strong>Great for</strong>
+                            </div>
+                            <ul>
+                                <li>Two customer <code>.cfg</code> copies — see what changed</li>
+                                <li>Before/after conflict exports that should be nearly identical</li>
+                            </ul>
+                        </div>
+                        <div class="diff-info-bad">
+                            <div class="diff-info-example-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                                <strong>Remember</strong>
+                            </div>
+                            <ul>
+                                <li>Very different configs will show many &quot;unique&quot; lines — same idea as on Compare</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="diff-info-note">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                        <span>You have <strong>${configFileCount} config file${configFileCount !== 1 ? 's' : ''}</strong> in this view. ${configFileCount > 2 ? 'With more than 2 files, expect more highlighted differences.' : 'Lines are matched as trimmed text across all of them.'}</span>
+                    </div>
+                </div>
+                <div class="diff-info-footer">
+                    <label class="diff-info-remember">
+                        <input type="checkbox" id="configDiffInfoDontShow" />
+                        <span>Don't show this again (config viewer only)</span>
+                    </label>
+                    <div class="diff-info-actions">
+                        <button class="btn btn-secondary" onclick="closeConfigDiffInfoDialog()">Cancel</button>
+                        <button class="btn btn-primary" onclick="proceedConfigHighlightDifferences()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 3v18"></path>
+                                <path d="M5 10l7-7 7 7"></path>
+                            </svg>
+                            Proceed with Comparison
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', dialogHTML);
+
+    try {
+        if (localStorage.getItem('traka-config-diff-info-skip') === 'true') {
+            closeConfigDiffInfoDialog();
+            executeConfigMultiHighlightDifferences();
+        }
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function closeConfigDiffInfoDialog() {
+    const overlay = document.querySelector('.config-diff-info-overlay');
+    if (overlay) {
+        overlay.style.animation = 'fadeOut 0.2s ease-out';
+        const dlg = overlay.querySelector('.diff-info-dialog');
+        if (dlg) {
+            dlg.style.animation = 'diffDialogOut 0.2s ease-out';
+        }
+        setTimeout(() => overlay.remove(), 200);
+    }
+}
+
+function proceedConfigHighlightDifferences() {
+    const dontShow = document.getElementById('configDiffInfoDontShow');
+    if (dontShow && dontShow.checked) {
+        try {
+            localStorage.setItem('traka-config-diff-info-skip', 'true');
+        } catch (e) {
+            /* ignore */
+        }
+    }
+    closeConfigDiffInfoDialog();
+    showGlobalLoader('Analysing differences...', 'Comparing config lines');
+    setTimeout(() => {
+        executeConfigMultiHighlightDifferences();
+        hideGlobalLoader();
+    }, 50);
+}
+
+function computeConfigMultiDiffStats(configFiles) {
+    const sets = configFiles.map(f => new Set(f.lines.map(l => String(l).trim())));
+    const uniqueCounts = configFiles.map((file, idx) => {
+        let u = 0;
+        for (const line of file.lines) {
+            const t = String(line).trim();
+            if (!t) {
+                continue;
+            }
+            const inOther = sets.some((set, j) => j !== idx && set.has(t));
+            if (!inOther) {
+                u++;
+            }
+        }
+        return u;
+    });
+    let commonCount = 0;
+    configFiles.forEach((file, idx) => {
+        for (const line of file.lines) {
+            const t = String(line).trim();
+            if (!t) {
+                continue;
+            }
+            const inOther = sets.some((set, j) => j !== idx && set.has(t));
+            if (inOther) {
+                commonCount++;
+            }
+        }
+    });
+    return { uniqueCounts, commonCount, sets };
+}
+
+function executeConfigMultiHighlightDifferences() {
+    const configFiles = state.files.filter(f => f.isConfig);
+    if (configFiles.length < 2) {
+        return;
+    }
+
+    const { uniqueCounts, commonCount, sets } = computeConfigMultiDiffStats(configFiles);
+    state.configMultiDiffSets = sets;
+    state.configMultiDiffHighlightActive = true;
+
+    const diffBtn = document.getElementById('configHighlightDiffBtn');
+    if (diffBtn) {
+        diffBtn.classList.add('active');
+    }
+
+    refreshConfigMultiVirtualScrollLayout();
+    showConfigDiffSummary(uniqueCounts, commonCount, configFiles);
+}
+
+function showConfigDiffSummary(uniqueCounts, commonCount, configFiles) {
+    const summaryHTML = `
+        <div class="config-diff-summary-overlay" onclick="closeConfigDiffSummary()">
+            <div class="diff-summary-panel" onclick="event.stopPropagation()">
+                <div class="diff-summary-header">
+                    <h3>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 16v-4"></path>
+                            <path d="M12 8h.01"></path>
+                        </svg>
+                        Config difference analysis
+                    </h3>
+                    <button class="btn-icon" onclick="closeConfigDiffSummary()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="diff-summary-content">
+                    <div class="diff-legend">
+                        <div class="diff-legend-item">
+                            <div class="diff-legend-box unique"></div>
+                            <div class="diff-legend-text">
+                                <strong>Red (Unique Lines)</strong>
+                                <p>Trimmed line text appears only in this config</p>
+                            </div>
+                        </div>
+                        <div class="diff-legend-item">
+                            <div class="diff-legend-box common"></div>
+                            <div class="diff-legend-text">
+                                <strong>Blue (Common Lines)</strong>
+                                <p>Same trimmed line appears in at least one other config</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="diff-stats">
+                        <h4>Statistics (config files only)</h4>
+                        ${configFiles.map((file, idx) => `
+                            <div class="diff-stat-file">
+                                <div class="diff-stat-filename">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                    </svg>
+                                    ${escapeHtml(file.name)}
+                                </div>
+                                <div class="diff-stat-numbers">
+                                    <span class="diff-stat-unique">
+                                        <strong>${uniqueCounts[idx]}</strong> unique lines
+                                    </span>
+                                    <span class="diff-stat-common">
+                                        <strong>${file.lines.length - uniqueCounts[idx]}</strong> non-unique lines
+                                    </span>
+                                    <span class="diff-stat-total">
+                                        Total: <strong>${file.lines.length}</strong> lines
+                                    </span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="diff-summary-tip">
+                        Scroll panels to inspect highlights. Clearing removes styling from config multi-view only.
+                    </div>
+                </div>
+                <div class="diff-summary-footer">
+                    <button class="btn btn-secondary" onclick="clearConfigMultiDiffHighlights()">Clear Highlights</button>
+                    <button class="btn btn-primary" onclick="closeConfigDiffSummary()">Got It</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const existing = document.querySelector('.config-diff-summary-overlay');
+    if (existing) {
+        existing.remove();
+    }
+    document.body.insertAdjacentHTML('beforeend', summaryHTML);
+}
+
+function closeConfigDiffSummary() {
+    const overlay = document.querySelector('.config-diff-summary-overlay');
+    if (overlay) {
+        overlay.style.animation = 'fadeOut 0.2s ease-out';
+        setTimeout(() => overlay.remove(), 200);
+    }
+}
+
+function clearConfigMultiDiffHighlights() {
+    state.configMultiDiffHighlightActive = false;
+    state.configMultiDiffSets = null;
+    const diffBtn = document.getElementById('configHighlightDiffBtn');
+    if (diffBtn) {
+        diffBtn.classList.remove('active');
+    }
+    closeConfigDiffSummary();
+    refreshConfigMultiVirtualScrollLayout();
+    showToast('Config difference highlights cleared', 'info');
 }
 
 function renderLogOptimized(fileData, filteredLines, gutter, content, statsElementId = 'viewerStats') {
@@ -2977,7 +3711,11 @@ function performCompareSearch() {
         return;
     }
 
-    const panels = document.querySelectorAll('.compare-panel-content');
+    const compareRoot = document.getElementById('compareContainer');
+    if (!compareRoot) {
+        return;
+    }
+    const panels = compareRoot.querySelectorAll('.compare-panel-content');
     const isFilterMode = state.compareSearchFilterMode;
     
     panels.forEach(panel => {
@@ -3563,6 +4301,10 @@ function handleCompareScroll(event, sourceIndex) {
     if (state.timeSyncScrolling || isSyncingScroll) return; // Ignore programmatic scrolls during sync
     
     const sourcePanel = event.target;
+    const compareRoot = sourcePanel.closest('#compareContainer');
+    if (!compareRoot) {
+        return;
+    }
     
     // If Time Sync is active and we have an anchor lock, sync scroll by EXACT PIXELS (slot machine mode)
     if (state.timeSyncActive && state.timeSyncOffsets && state.timeSyncOffsets[sourceIndex] !== undefined) {
@@ -3571,7 +4313,7 @@ function handleCompareScroll(event, sourceIndex) {
         const currentScroll = sourcePanel.scrollTop;
         const delta = currentScroll - state.timeSyncOffsets[sourceIndex];
         
-        document.querySelectorAll('.compare-panel-content').forEach((panel) => {
+        compareRoot.querySelectorAll('.compare-panel-content').forEach((panel) => {
             const index = parseInt(panel.getAttribute('data-panel-index'), 10);
             if (!isNaN(index) && index !== sourceIndex && state.timeSyncOffsets[index] !== undefined) {
                 panel.scrollTop = state.timeSyncOffsets[index] + delta;
@@ -3597,7 +4339,7 @@ function handleCompareScroll(event, sourceIndex) {
     isSyncingScroll = true;
     const scrollRatio = sourcePanel.scrollTop / (sourcePanel.scrollHeight - sourcePanel.clientHeight);
     
-    document.querySelectorAll('.compare-panel-content').forEach((panel) => {
+    compareRoot.querySelectorAll('.compare-panel-content').forEach((panel) => {
         const index = parseInt(panel.getAttribute('data-panel-index'), 10);
         if (!isNaN(index) && index !== sourceIndex) {
             const targetScrollTop = scrollRatio * (panel.scrollHeight - panel.clientHeight);
@@ -3623,17 +4365,18 @@ function toggleSyncScroll() {
 }
 
 function highlightDifferences() {
-    // Simple difference highlighting - marks lines that are unique to each file
-    if (state.files.length < 2) {
-        showToast('Need at least 2 files to compare', 'warning');
+    const compareFiles = state.files.filter(f => !f.isConfig);
+    if (compareFiles.length < 2) {
+        showToast('Need at least 2 log files on the Compare page', 'warning');
         return;
     }
-    
-    // Show info dialog first to explain what the feature is for
     showDiffInfoDialog();
 }
 
 function showDiffInfoDialog() {
+    const compareFiles = state.files.filter(f => !f.isConfig);
+    const compareCount = compareFiles.length;
+
     // Remove existing if present
     const existing = document.querySelector('.diff-info-overlay');
     if (existing) existing.remove();
@@ -3689,7 +4432,7 @@ function showDiffInfoDialog() {
                     
                     <div class="diff-info-note">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
-                        <span>You currently have <strong>${state.files.length} files</strong> loaded. ${state.files.length > 2 ? 'With more than 2 files, expect more highlighted differences.' : 'This will compare all lines across your loaded files.'}</span>
+                        <span>You currently have <strong>${compareCount} log file${compareCount !== 1 ? 's' : ''}</strong> in Compare. ${compareCount > 2 ? 'With more than 2 files, expect more highlighted differences.' : 'This will compare trimmed lines across those log panels.'}</span>
                     </div>
                 </div>
                 
@@ -3754,36 +4497,61 @@ function proceedHighlightDifferences() {
 }
 
 function executeHighlightDifferences() {
-    const allLines = state.files.map(f => new Set(f.lines.map(l => l.trim())));
-    let uniqueCounts = Array(state.files.length).fill(0);
+    const compareRoot = document.getElementById('compareContainer');
+    if (!compareRoot) {
+        return;
+    }
+
+    const zip = [...compareRoot.querySelectorAll('.compare-panel')]
+        .map(panel => {
+            const gi = parseInt(panel.getAttribute('data-index'), 10);
+            return { panel, file: state.files[gi] };
+        })
+        .filter(x => x.file && !x.file.isConfig);
+
+    if (zip.length < 2) {
+        showToast('Need at least 2 log files in Compare', 'warning');
+        return;
+    }
+
+    const filesForDiff = zip.map(x => x.file);
+    const allLines = filesForDiff.map(f => new Set(f.lines.map(l => String(l).trim())));
+    const uniqueCounts = Array(filesForDiff.length).fill(0);
     let commonCount = 0;
-    
-    document.querySelectorAll('.compare-panel').forEach((panel, fileIndex) => {
+
+    zip.forEach(({ panel, file }, panelIdx) => {
+        const otherFiles = allLines.filter((_, idx) => idx !== panelIdx);
         const lines = panel.querySelectorAll('.log-line');
-        const otherFiles = allLines.filter((_, idx) => idx !== fileIndex);
-        
-        lines.forEach((lineEl, lineIdx) => {
-            const lineText = state.files[fileIndex].lines[lineIdx]?.trim();
-            const isUnique = !otherFiles.some(set => set.has(lineText));
-            
-            // Remove both highlight classes first
+
+        lines.forEach(lineEl => {
+            const lineNum = parseInt(lineEl.getAttribute('data-line'), 10);
+            const lineText =
+                file && !isNaN(lineNum) && lineNum >= 1
+                    ? String(file.lines[lineNum - 1] || '').trim()
+                    : '';
+
             lineEl.classList.remove('highlight-unique', 'highlight-common');
-            
-            if (isUnique && lineText) {
+
+            if (!lineText) {
+                return;
+            }
+
+            const isUnique = !otherFiles.some(set => set.has(lineText));
+            if (isUnique) {
                 lineEl.classList.add('highlight-unique');
-                uniqueCounts[fileIndex]++;
-            } else if (lineText) {
+                uniqueCounts[panelIdx]++;
+            } else {
                 lineEl.classList.add('highlight-common');
                 commonCount++;
             }
         });
     });
-    
-    // Show beautiful diff summary panel
-    showDiffSummary(uniqueCounts, commonCount);
+
+    showDiffSummary(uniqueCounts, commonCount, filesForDiff);
 }
 
-function showDiffSummary(uniqueCounts, commonCount) {
+function showDiffSummary(uniqueCounts, commonCount, filesOverride) {
+    const files = filesOverride || state.files;
     // Create a beautiful diff summary panel
     const summaryHTML = `
         <div class="diff-summary-overlay" onclick="closeDiffSummary()">
@@ -3825,7 +4593,7 @@ function showDiffSummary(uniqueCounts, commonCount) {
                     
                     <div class="diff-stats">
                         <h4>📊 Statistics</h4>
-                        ${state.files.map((file, idx) => `
+                        ${files.map((file, idx) => `
                             <div class="diff-stat-file">
                                 <div class="diff-stat-filename">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3880,9 +4648,12 @@ function closeDiffSummary() {
 }
 
 function clearHighlights() {
-    document.querySelectorAll('.log-line').forEach(line => {
-        line.classList.remove('highlight-unique', 'highlight-common');
-    });
+    const compareRoot = document.getElementById('compareContainer');
+    if (compareRoot) {
+        compareRoot.querySelectorAll('.log-line').forEach(line => {
+            line.classList.remove('highlight-unique', 'highlight-common');
+        });
+    }
     closeDiffSummary();
     showToast('Highlights cleared', 'info');
 }
@@ -4463,8 +5234,11 @@ function scrollToBottom() {
  * Scroll all compare panels to bottom
  */
 function scrollComparePanelsToBottom() {
-    const panels = document.querySelectorAll('.compare-panel-content');
-    panels.forEach(panel => {
+    const root = document.getElementById('compareContainer');
+    if (!root) {
+        return;
+    }
+    root.querySelectorAll('.compare-panel-content').forEach(panel => {
         panel.scrollTop = panel.scrollHeight;
     });
 }
@@ -5139,6 +5913,10 @@ function jumpToLine() {
 }
 
 function jumpToConfigLine() {
+    if (state.configViewMode === 'multi') {
+        showToast('Switch to single file view to jump to a line', 'info');
+        return;
+    }
     const lineNum = parseInt(document.getElementById('configJumpToLine').value);
     if (isNaN(lineNum) || lineNum < 1) {
         showToast('Please enter a valid line number', 'warning');
@@ -6333,17 +7111,25 @@ function closeHighlightRulesModal() {
         const configFile = state.currentConfigFileIndex >= 0 ? state.files[state.currentConfigFileIndex] : null;
         const cf = configFile && configFile.isConfig ? configFile : null;
         const big = cf && cf.lines && cf.lines.length > 5000;
+        const refreshConfigAfterRules = () => {
+            if (state.configViewMode === 'multi') {
+                renderConfigMultiView();
+            } else if (cf) {
+                displayConfigFile(cf);
+            } else {
+                displayConfigFile(null);
+            }
+            updateConfigHighlightResults();
+        };
         if (big) {
             showGlobalLoader('Applying highlight rules...', 'Updating config view');
             setTimeout(() => {
-                if (cf) displayConfigFile(cf);
-                updateConfigHighlightResults();
+                refreshConfigAfterRules();
                 hideGlobalLoader();
                 finishScope();
             }, 50);
         } else {
-            if (cf) displayConfigFile(cf);
-            updateConfigHighlightResults();
+            refreshConfigAfterRules();
             finishScope();
         }
         return;
@@ -6830,6 +7616,11 @@ function buildRuleGroupHtml(match, navTarget, startCollapsed) {
 function updateConfigHighlightResults() {
     const panel = document.getElementById('configHighlightResults');
     if (!panel) return;
+
+    if (state.configViewMode === 'multi') {
+        panel.style.display = 'none';
+        return;
+    }
 
     if (!state.configHighlightRules.length || state.currentConfigFileIndex < 0) {
         panel.style.display = 'none';
@@ -7366,7 +8157,11 @@ document.addEventListener('keydown', (e) => {
         // First check if a single panel is maximized - restore that first
         const maximizedPanel = document.querySelector('.compare-panel.panel-maximized');
         if (maximizedPanel) {
-            restoreAllPanels();
+            if (maximizedPanel.closest('#configMultiContainer')) {
+                restoreConfigMultiMaximized();
+            } else {
+                restoreAllPanels();
+            }
             return;
         }
         
