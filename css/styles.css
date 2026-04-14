@@ -392,6 +392,7 @@ body {
 #page-viewer.active > .highlight-results-panel,
 #page-config.active > .page-header,
 #page-config.active > .config-viewer-toolbar,
+#page-config.active > .highlight-results-panel,
 #page-config.active > .config-viewer-footer {
     flex-shrink: 0;
 }
@@ -1803,6 +1804,26 @@ mark.compare-search-hl {
     display: flex;
     gap: 0.75rem;
     flex-wrap: wrap;
+    align-items: center;
+}
+
+.compare-layout-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.compare-layout-picker label {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    margin: 0;
+}
+
+.compare-layout-select {
+    min-width: 11.5rem;
+    padding: 0.4rem 0.6rem;
 }
 
 .unified-search {
@@ -1811,10 +1832,8 @@ mark.compare-search-hl {
 }
 
 /*
- * Compare Container: ALWAYS side-by-side.
- * Uses flexbox for reliable horizontal layout that never wraps/stacks.
- * No fixed height — flex: 1 fills all available space between the toolbar
- * and the time-sync panel (or the bottom of the page when it's hidden).
+ * Compare Container: default side-by-side (row). Optional .compare-layout-stacked
+ * stacks panels top-to-bottom with equal height share, filling available space.
  */
 .compare-container {
     display: flex;
@@ -1830,10 +1849,34 @@ mark.compare-search-hl {
     justify-content: center;
 }
 
-/* Each panel takes equal width, side-by-side always */
+.compare-container.compare-layout-stacked:has(.compare-empty) {
+    justify-content: flex-start;
+    align-items: stretch;
+}
+
+.compare-container.compare-layout-stacked .compare-empty {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 280px;
+}
+
+/* Each panel takes equal share along the main axis */
 .compare-container .compare-panel {
     flex: 1 1 0;
     min-width: 0; /* Allow shrinking below content width */
+}
+
+/* Stacked: panels in a column, equal vertical space */
+.compare-container.compare-layout-stacked {
+    flex-direction: column;
+    flex-wrap: nowrap;
+}
+
+.compare-container.compare-layout-stacked .compare-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    width: 100%;
 }
 
 .compare-panel {
@@ -1844,6 +1887,10 @@ mark.compare-search-hl {
     flex-direction: column;
     overflow: hidden;
     min-height: 300px;
+}
+
+.compare-container.compare-layout-stacked .compare-panel {
+    min-height: 0;
 }
 
 .compare-panel-header {
@@ -4410,7 +4457,14 @@ body:has(#page-viewer.fullscreen-mode) .main-content {
     max-height: none !important;
     overflow: hidden !important;
     min-height: 0 !important;
+}
+
+#page-compare.fullscreen-mode .compare-container:not(.compare-layout-stacked) {
     flex-direction: row !important;
+}
+
+#page-compare.fullscreen-mode .compare-container.compare-layout-stacked {
+    flex-direction: column !important;
 }
 
 /* Remove min-height constraint on panels in fullscreen so they fill the space */

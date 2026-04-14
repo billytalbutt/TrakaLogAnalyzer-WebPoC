@@ -902,10 +902,16 @@ const state = {
     stitchedFiles: [], // Files selected for stitching
     stitchedData: null, // Merged log data
     dateSortOrder: 'none', // Date sorting: 'none', 'asc', 'desc'
-    highlightRules: [], // Custom text highlighting rules (BareTail-style)
+    highlightRules: [], // Custom text highlighting rules (BareTail-style) — log viewer & compare
+    /** Separate rules for the Config file page only (not shared with logs) */
+    configHighlightRules: [],
+    /** 'logs' | 'config' — which rule set the highlight modal is editing */
+    highlightRulesModalScope: 'logs',
     minimizedPanels: new Set(), // Track minimized compare panels by file index
     poppedOutPanels: new Set(), // Track popped out panels by file index
     compareSearchFilterMode: false, // false = highlight mode, true = filter (show matches only)
+    /** Compare page panel layout: 'sideBySide' (columns) or 'stacked' (rows, top to bottom) */
+    compareLayout: 'sideBySide',
     dateFromPicker: null, // Flatpickr instance for start date
     dateToPicker: null, // Flatpickr instance for end date
     engineFilters: {
@@ -1072,6 +1078,8 @@ function initializeApp() {
         
         console.log('  ✓ Loading highlight rules...');
         loadHighlightRules(); // Load saved highlight rules
+        loadConfigHighlightRules();
+        loadCompareLayout();
         
         console.log('  ✓ Updating UI...');
         updateUI();
@@ -1091,6 +1099,8 @@ function initializeApp() {
             console.log('  ✓ Initializing Electron features...');
             initElectronUI();
         }
+
+        applyCompareLayoutToDom();
         
         console.log('✅ App initialization complete!');
     } catch (error) {
@@ -2178,6 +2188,42 @@ function displayLog(fileData) {
 }
 
 /**
+ * Build inner HTML for one config file line: optional custom highlights, then syntax styling.
+ * Uses state.configHighlightRules only (independent from log highlight rules).
+ */
+function formatConfigLineInnerHtml(entry, fileName) {
+    const raw = entry.raw;
+    const rules = state.configHighlightRules;
+    const hasCfgRules = rules && rules.length > 0;
+
+    if (hasCfgRules) {
+        const core = applyHighlightRulesWithRules(raw, fileName, rules);
+        if (raw.trim().startsWith('[') && raw.trim().endsWith(']')) {
+            return `<span style="color: var(--accent-primary); font-weight: 600;">${core}</span>`;
+        }
+        if (raw.trim().startsWith('#') || raw.trim().startsWith(';')) {
+            return `<span style="color: var(--text-tertiary); font-style: italic;">${core}</span>`;
+        }
+        return core;
+    }
+
+    let highlightedLine = escapeHtml(raw);
+    if (raw.trim().startsWith('[') && raw.trim().endsWith(']')) {
+        highlightedLine = `<span style="color: var(--accent-primary); font-weight: 600;">${highlightedLine}</span>`;
+    } else if (raw.trim().startsWith('#') || raw.trim().startsWith(';')) {
+        highlightedLine = `<span style="color: var(--text-tertiary); font-style: italic;">${highlightedLine}</span>`;
+    } else if (raw.includes('=')) {
+        const parts = raw.split('=');
+        if (parts.length >= 2) {
+            const key = escapeHtml(parts[0]);
+            const value = escapeHtml(parts.slice(1).join('='));
+            highlightedLine = `<span style="color: var(--accent-secondary);">${key}</span>=<span style="color: var(--text-primary);">${value}</span>`;
+        }
+    }
+    return highlightedLine;
+}
+
+/**
  * Render a loaded .cfg / .ini / .config in the Config viewer (separate DOM from Log Viewer).
  */
 function displayConfigFile(fileData) {
@@ -2201,6 +2247,7 @@ function displayConfigFile(fileData) {
         gutter.innerHTML = '';
         const st = document.getElementById('configViewerStats');
         if (st) st.textContent = 'No file loaded';
+        updateConfigHighlightResults();
         return;
     }
 
@@ -2227,6 +2274,8 @@ function displayConfigFile(fileData) {
     } else {
         renderLogOptimized(fileData, filteredLines, gutter, content, 'configViewerStats');
     }
+
+    updateConfigHighlightResults();
 }
 
 function renderLogOptimized(fileData, filteredLines, gutter, content, statsElementId = 'viewerStats') {
@@ -2265,19 +2314,7 @@ function renderLogBatched(fileData, filteredLines, gutter, content, startIdx, ba
         
         // Content
         if (fileData.isConfig) {
-            let highlightedLine = escapeHtml(entry.raw);
-            if (entry.raw.trim().startsWith('[') && entry.raw.trim().endsWith(']')) {
-                highlightedLine = `<span style="color: var(--accent-primary); font-weight: 600;">${highlightedLine}</span>`;
-            } else if (entry.raw.trim().startsWith('#') || entry.raw.trim().startsWith(';')) {
-                highlightedLine = `<span style="color: var(--text-tertiary); font-style: italic;">${highlightedLine}</span>`;
-            } else if (entry.raw.includes('=')) {
-                const parts = entry.raw.split('=');
-                if (parts.length >= 2) {
-                    const key = escapeHtml(parts[0]);
-                    const value = escapeHtml(parts.slice(1).join('='));
-                    highlightedLine = `<span style="color: var(--accent-secondary);">${key}</span>=<span style="color: var(--text-primary);">${value}</span>`;
-                }
-            }
+            const highlightedLine = formatConfigLineInnerHtml(entry, fileData.name);
             batchHTML.push(`<div class="log-line config-line" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`);
         } else {
             const levelClass = (!fileData.skipErrorRendering && entry.level !== 'default') ? entry.level : '';
@@ -2437,18 +2474,7 @@ function updateViewerViewport(force) {
         let displayLine;
 
         if (fileData.isConfig) {
-            let hl = escapeHtml(entry.raw);
-            if (entry.raw.trim().startsWith('[') && entry.raw.trim().endsWith(']')) {
-                hl = `<span style="color: var(--accent-primary); font-weight: 600;">${hl}</span>`;
-            } else if (entry.raw.trim().startsWith('#') || entry.raw.trim().startsWith(';')) {
-                hl = `<span style="color: var(--text-tertiary); font-style: italic;">${hl}</span>`;
-            } else if (entry.raw.includes('=')) {
-                const parts = entry.raw.split('=');
-                if (parts.length >= 2) {
-                    hl = `<span style="color: var(--accent-secondary);">${escapeHtml(parts[0])}</span>=<span style="color: var(--text-primary);">${escapeHtml(parts.slice(1).join('='))}</span>`;
-                }
-            }
-            displayLine = hl;
+            displayLine = formatConfigLineInnerHtml(entry, fileData.name);
         } else {
             displayLine = state.settings.highlightSearch && vs.searchMatchIndices.has(i)
                 ? highlightSearchTerms(escapeHtml(entry.raw))
@@ -2519,23 +2545,8 @@ function renderLogDirect(fileData, filteredLines, gutter, content, statsElementI
     const contentDiv = document.createElement('div');
     
     if (fileData.isConfig) {
-        // Config file display with syntax highlighting
         contentDiv.innerHTML = filteredLines.map(entry => {
-            let highlightedLine = escapeHtml(entry.raw);
-            
-            if (entry.raw.trim().startsWith('[') && entry.raw.trim().endsWith(']')) {
-                highlightedLine = `<span style="color: var(--accent-primary); font-weight: 600;">${highlightedLine}</span>`;
-            } else if (entry.raw.trim().startsWith('#') || entry.raw.trim().startsWith(';')) {
-                highlightedLine = `<span style="color: var(--text-tertiary); font-style: italic;">${highlightedLine}</span>`;
-            } else if (entry.raw.includes('=')) {
-                const parts = entry.raw.split('=');
-                if (parts.length >= 2) {
-                    const key = escapeHtml(parts[0]);
-                    const value = escapeHtml(parts.slice(1).join('='));
-                    highlightedLine = `<span style="color: var(--accent-secondary);">${key}</span>=<span style="color: var(--text-primary);">${value}</span>`;
-                }
-            }
-            
+            const highlightedLine = formatConfigLineInnerHtml(entry, fileData.name);
             return `<div class="log-line config-line" data-line="${entry.lineNumber}">${highlightedLine || '&nbsp;'}</div>`;
         }).join('');
     } else {
@@ -3184,6 +3195,62 @@ function clearDateFilter() {
 // ============================================
 // Compare View
 // ============================================
+
+function loadCompareLayout() {
+    try {
+        const v = localStorage.getItem('traka-compare-layout');
+        if (v === 'stacked' || v === 'sideBySide') {
+            state.compareLayout = v;
+        }
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function saveCompareLayout() {
+    try {
+        localStorage.setItem('traka-compare-layout', state.compareLayout);
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function applyCompareLayoutToDom() {
+    const container = document.getElementById('compareContainer');
+    const sel = document.getElementById('compareLayoutSelect');
+    if (sel) sel.value = state.compareLayout;
+    const stacked = state.compareLayout === 'stacked';
+    if (container) {
+        container.classList.toggle('compare-layout-stacked', stacked);
+    }
+}
+
+/** Re-measure compare panels after layout or fullscreen size change */
+function refreshCompareVirtualScrollLayout() {
+    if (!state.compareVirtualScroll) return;
+    state.compareVirtualScroll.forEach((vs, idx) => {
+        if (vs) {
+            vs.lastRenderedStart = -1;
+            vs.lastRenderedEnd = -1;
+            updateComparePanelViewport(idx, true);
+        }
+    });
+}
+
+function setCompareLayout(layout) {
+    if (layout !== 'stacked' && layout !== 'sideBySide') return;
+    state.compareLayout = layout;
+    saveCompareLayout();
+    applyCompareLayoutToDom();
+    requestAnimationFrame(() => {
+        refreshCompareVirtualScrollLayout();
+    });
+    showToast(
+        layout === 'stacked' ? 'Compare layout: stacked (top to bottom)' : 'Compare layout: side by side',
+        'info'
+    );
+}
+
 function initCompareDropZone() {
     const dropZone = document.getElementById('compareDropZone');
     
@@ -3240,6 +3307,7 @@ function updateCompareView() {
         
         // Re-initialize drop zone after updating HTML
         initCompareDropZone();
+        applyCompareLayoutToDom();
         return;
     }
     
@@ -3321,6 +3389,9 @@ function updateCompareView() {
     container.innerHTML = panelsHtml;
 
     initCompareVirtualScroll(container, compareFiles);
+
+    applyCompareLayoutToDom();
+    requestAnimationFrame(() => refreshCompareVirtualScrollLayout());
 
     // Build/update the floating minimized dock (lives outside the container)
     updateMinimizedDock();
@@ -6180,7 +6251,32 @@ function deselectAllStitchFiles() {
 // Custom Text Highlighting Feature (BareTail-style)
 // ============================================
 
-function openHighlightRulesModal() {
+function getModalHighlightRules() {
+    return state.highlightRulesModalScope === 'config' ? state.configHighlightRules : state.highlightRules;
+}
+
+function saveRulesForCurrentModalScope() {
+    if (state.highlightRulesModalScope === 'config') saveConfigHighlightRules();
+    else saveHighlightRules();
+}
+
+/**
+ * @param {'logs'|'config'} [scope] — 'config' edits rules for the Config page only
+ */
+function openHighlightRulesModal(scope = 'logs') {
+    state.highlightRulesModalScope = scope === 'config' ? 'config' : 'logs';
+
+    const titleEl = document.getElementById('highlightRulesModalTitleText');
+    const descEl = document.getElementById('highlightRulesModalDesc');
+    if (titleEl) {
+        titleEl.textContent = state.highlightRulesModalScope === 'config' ? 'Config highlight rules' : 'Highlight Rules';
+    }
+    if (descEl) {
+        descEl.textContent = state.highlightRulesModalScope === 'config'
+            ? 'These rules apply only to the Config file viewer. They are stored separately from Log Viewer and Compare highlight rules. Use them to flag keys, values, or sections in .cfg / .ini files.'
+            : 'Create custom highlighting rules to make specific text stand out in log files. Perfect for tracking API calls, errors, or specific patterns during live tail monitoring.';
+    }
+
     const modal = document.getElementById('highlightRulesModal');
     modal.style.display = 'flex';
     // Trigger reflow so the transition from opacity 0 → 1 actually animates
@@ -6222,23 +6318,45 @@ function openHighlightRulesModal() {
 }
 
 function closeHighlightRulesModal() {
+    const scope = state.highlightRulesModalScope;
     const modal = document.getElementById('highlightRulesModal');
     modal.classList.remove('active');
-    // Wait for the fade-out transition to finish before hiding
     setTimeout(() => {
         modal.style.display = 'none';
     }, 250);
-    
-    // Check if there's heavy re-rendering to do
+
+    const finishScope = () => {
+        state.highlightRulesModalScope = 'logs';
+    };
+
+    if (scope === 'config') {
+        const configFile = state.currentConfigFileIndex >= 0 ? state.files[state.currentConfigFileIndex] : null;
+        const cf = configFile && configFile.isConfig ? configFile : null;
+        const big = cf && cf.lines && cf.lines.length > 5000;
+        if (big) {
+            showGlobalLoader('Applying highlight rules...', 'Updating config view');
+            setTimeout(() => {
+                if (cf) displayConfigFile(cf);
+                updateConfigHighlightResults();
+                hideGlobalLoader();
+                finishScope();
+            }, 50);
+        } else {
+            if (cf) displayConfigFile(cf);
+            updateConfigHighlightResults();
+            finishScope();
+        }
+        return;
+    }
+
     const hasViewer = state.currentFileIndex >= 0;
     const hasCompare = state.files.length > 0;
     const totalLines = state.files.reduce((sum, f) => sum + f.lines.length, 0);
     const needsLoader = (hasViewer || hasCompare) && totalLines > 0;
-    
+
     if (needsLoader) {
         showGlobalLoader('Applying highlight rules...', 'Updating log views');
-        
-        // Defer the heavy re-render so the loader can paint
+
         setTimeout(() => {
             if (hasViewer) {
                 const currentFile = state.files[state.currentFileIndex];
@@ -6248,15 +6366,18 @@ function closeHighlightRulesModal() {
                     displayLog(currentFile);
                 }
             }
-            
+
             if (hasCompare) {
                 updateCompareView();
                 updateCompareHighlightResults();
             }
-            
+
             updateViewerHighlightCounts();
             hideGlobalLoader();
+            finishScope();
         }, 50);
+    } else {
+        finishScope();
     }
 }
 
@@ -6267,26 +6388,33 @@ function closeHighlightRulesModal() {
 function populateRuleFileSelector() {
     const container = document.getElementById('ruleFileSelector');
     if (!container) return;
-    
-    if (state.files.length === 0) {
+
+    const isConfigScope = state.highlightRulesModalScope === 'config';
+    const scopeFiles = isConfigScope ? state.files.filter(f => f.isConfig) : state.files;
+    const allLabel = isConfigScope ? 'All config files' : 'All Files';
+    const emptyHint = isConfigScope
+        ? 'No config files loaded — rule will apply when you load a .cfg / .ini file'
+        : 'No files loaded — rule will apply to all files when loaded';
+
+    if (scopeFiles.length === 0) {
         container.innerHTML = `
             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.375rem 0.75rem; background: var(--accent-primary-light); border: 1px solid var(--accent-primary); border-radius: 20px; font-size: 0.8125rem; color: var(--accent-primary); font-weight: 500;">
                 <input type="checkbox" id="ruleTargetAll" checked disabled style="accent-color: var(--accent-primary);">
-                <span>All Files</span>
+                <span>${escapeHtml(allLabel)}</span>
             </label>
-            <span style="font-size: 0.75rem; color: var(--text-tertiary); padding: 0.375rem;">No files loaded — rule will apply to all files when loaded</span>
+            <span style="font-size: 0.75rem; color: var(--text-tertiary); padding: 0.375rem;">${escapeHtml(emptyHint)}</span>
         `;
         return;
     }
-    
+
     let html = `
         <label class="rule-file-chip" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.375rem 0.75rem; background: var(--accent-primary-light); border: 1px solid var(--accent-primary); border-radius: 20px; font-size: 0.8125rem; color: var(--accent-primary); font-weight: 500; transition: all 0.15s ease;">
             <input type="checkbox" id="ruleTargetAll" checked onchange="toggleRuleTargetAll(this.checked)" style="accent-color: var(--accent-primary);">
-            <span>All Files</span>
+            <span>${escapeHtml(allLabel)}</span>
         </label>
     `;
-    
-    state.files.forEach((file, idx) => {
+
+    scopeFiles.forEach((file) => {
         const shortLabel = getShortLabel(file);
         html += `
             <label class="rule-file-chip" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.375rem 0.75rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 20px; font-size: 0.8125rem; color: var(--text-secondary); transition: all 0.15s ease;" data-file-name="${escapeHtml(file.name)}">
@@ -6299,7 +6427,7 @@ function populateRuleFileSelector() {
             </label>
         `;
     });
-    
+
     container.innerHTML = html;
 }
 
@@ -6415,7 +6543,7 @@ function addHighlightRule() {
         targetFiles: targetFiles
     };
     
-    state.highlightRules.push(rule);
+    getModalHighlightRules().push(rule);
     
     // Clear inputs and reset file selector to "All"
     document.getElementById('newRulePattern').value = '';
@@ -6429,8 +6557,7 @@ function addHighlightRule() {
     // Update list
     updateHighlightRulesList();
     
-    // Save to localStorage
-    saveHighlightRules();
+    saveRulesForCurrentModalScope();
     
     showToast('Highlight rule added', 'success');
 }
@@ -6438,12 +6565,13 @@ function addHighlightRule() {
 function updateHighlightRulesList() {
     const list = document.getElementById('highlightRulesList');
     const countEl = document.getElementById('rulesCount');
+    const rules = getModalHighlightRules();
     
     if (!list) return;
     
-    countEl.textContent = state.highlightRules.length;
+    countEl.textContent = rules.length;
     
-    if (state.highlightRules.length === 0) {
+    if (rules.length === 0) {
         list.innerHTML = `
             <div style="text-align: center; padding: 2rem; color: var(--text-secondary); font-size: 0.875rem;">
                 No highlight rules yet. Add one above!
@@ -6452,11 +6580,13 @@ function updateHighlightRulesList() {
         return;
     }
     
-    list.innerHTML = state.highlightRules.map((rule, index) => {
+    const allTargetsLabel = state.highlightRulesModalScope === 'config' ? 'All config files' : 'All Files';
+
+    list.innerHTML = rules.map((rule, index) => {
         // Build the "applies to" label
         let appliesTo = '';
         if (!rule.targetFiles || rule.targetFiles === 'all') {
-            appliesTo = '<span style="font-size: 0.6875rem; padding: 0.125rem 0.5rem; background: var(--accent-primary-light); color: var(--accent-primary); border-radius: 10px; font-weight: 500;">All Files</span>';
+            appliesTo = `<span style="font-size: 0.6875rem; padding: 0.125rem 0.5rem; background: var(--accent-primary-light); color: var(--accent-primary); border-radius: 10px; font-weight: 500;">${escapeHtml(allTargetsLabel)}</span>`;
         } else if (Array.isArray(rule.targetFiles)) {
             appliesTo = rule.targetFiles.map(name => {
                 // Try to find the file and get its short label
@@ -6474,7 +6604,7 @@ function updateHighlightRulesList() {
                         <polyline points="18 15 12 9 6 15"></polyline>
                     </svg>
                 </button>
-                <button class="btn-icon" onclick="moveRuleDown(${index})" title="Move down" ${index === state.highlightRules.length - 1 ? 'disabled' : ''}>
+                <button class="btn-icon" onclick="moveRuleDown(${index})" title="Move down" ${index === rules.length - 1 ? 'disabled' : ''}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="6 9 12 15 18 9"></polyline>
                     </svg>
@@ -6516,29 +6646,31 @@ function updateHighlightRulesList() {
 }
 
 function toggleHighlightRule(index, enabled) {
-    state.highlightRules[index].enabled = enabled;
-    saveHighlightRules();
+    const rules = getModalHighlightRules();
+    rules[index].enabled = enabled;
+    saveRulesForCurrentModalScope();
     showToast(enabled ? 'Rule enabled' : 'Rule disabled', 'info');
 }
 
 function moveRuleUp(index) {
+    const rules = getModalHighlightRules();
     if (index === 0) return;
-    [state.highlightRules[index], state.highlightRules[index - 1]] = 
-    [state.highlightRules[index - 1], state.highlightRules[index]];
+    [rules[index], rules[index - 1]] = [rules[index - 1], rules[index]];
     updateHighlightRulesList();
-    saveHighlightRules();
+    saveRulesForCurrentModalScope();
 }
 
 function moveRuleDown(index) {
-    if (index === state.highlightRules.length - 1) return;
-    [state.highlightRules[index], state.highlightRules[index + 1]] = 
-    [state.highlightRules[index + 1], state.highlightRules[index]];
+    const rules = getModalHighlightRules();
+    if (index === rules.length - 1) return;
+    [rules[index], rules[index + 1]] = [rules[index + 1], rules[index]];
     updateHighlightRulesList();
-    saveHighlightRules();
+    saveRulesForCurrentModalScope();
 }
 
 function editHighlightRule(index) {
-    const rule = state.highlightRules[index];
+    const rules = getModalHighlightRules();
+    const rule = rules[index];
     document.getElementById('newRulePattern').value = rule.pattern;
     document.getElementById('newRuleTextColor').value = rule.textColor;
     document.getElementById('newRuleTextColorHex').value = rule.textColor;
@@ -6550,19 +6682,47 @@ function editHighlightRule(index) {
     // Restore file selection for this rule
     setRuleTargetFilesSelection(rule.targetFiles);
     
-    // Delete the old rule
-    state.highlightRules.splice(index, 1);
+    rules.splice(index, 1);
     updateHighlightRulesList();
-    saveHighlightRules();
+    saveRulesForCurrentModalScope();
     
     showToast('Edit rule and click "Add Rule" to save changes', 'info');
 }
 
 function deleteHighlightRule(index) {
-    state.highlightRules.splice(index, 1);
+    getModalHighlightRules().splice(index, 1);
     updateHighlightRulesList();
-    saveHighlightRules();
+    saveRulesForCurrentModalScope();
     showToast('Rule deleted', 'success');
+}
+
+/**
+ * Apply a given rule list to a line (escaped HTML). Used for logs and config independently.
+ */
+function applyHighlightRulesWithRules(lineText, fileName, rules) {
+    if (!rules || !rules.length) return escapeHtml(lineText);
+    let html = escapeHtml(lineText);
+
+    rules.forEach(rule => {
+        if (!rule.enabled) return;
+
+        if (fileName && rule.targetFiles && rule.targetFiles !== 'all') {
+            if (!rule.targetFiles.includes(fileName)) return;
+        }
+
+        try {
+            const flags = rule.caseSensitive ? 'g' : 'gi';
+            const regex = new RegExp(escapeRegex(rule.pattern), flags);
+
+            html = html.replace(regex, (match) => {
+                return `<span style="color: ${rule.textColor}; background-color: ${rule.backgroundColor}; padding: 2px 4px; border-radius: 2px; font-weight: 500;">${match}</span>`;
+            });
+        } catch (e) {
+            console.warn('Invalid highlight pattern:', rule.pattern, e);
+        }
+    });
+
+    return html;
 }
 
 /**
@@ -6573,37 +6733,14 @@ function deleteHighlightRule(index) {
  * @returns {string} HTML with highlighted spans
  */
 function applyHighlightRules(lineText, fileName) {
-    let html = escapeHtml(lineText);
-    
-    // Apply each enabled rule in order (priority based on list order)
-    state.highlightRules.forEach(rule => {
-        if (!rule.enabled) return;
-        
-        // Check if this rule targets the given file
-        if (fileName && rule.targetFiles && rule.targetFiles !== 'all') {
-            if (!rule.targetFiles.includes(fileName)) return;
-        }
-        
-        try {
-            const flags = rule.caseSensitive ? 'g' : 'gi';
-            const regex = new RegExp(escapeRegex(rule.pattern), flags);
-            
-            html = html.replace(regex, (match) => {
-                return `<span style="color: ${rule.textColor}; background-color: ${rule.backgroundColor}; padding: 2px 4px; border-radius: 2px; font-weight: 500;">${match}</span>`;
-            });
-        } catch (e) {
-            // Invalid regex, skip
-            console.warn('Invalid highlight pattern:', rule.pattern, e);
-        }
-    });
-    
-    return html;
+    return applyHighlightRulesWithRules(lineText, fileName, state.highlightRules);
 }
 
-function countHighlightMatchesForFile(lines, fileName, collectLines) {
-    if (!state.highlightRules.length) return [];
+function countHighlightMatchesForFile(lines, fileName, collectLines, rules = null) {
+    const ruleList = rules ?? state.highlightRules;
+    if (!ruleList.length) return [];
 
-    return state.highlightRules.reduce((results, rule) => {
+    return ruleList.reduce((results, rule) => {
         if (!rule.enabled) return results;
 
         if (fileName && rule.targetFiles && rule.targetFiles !== 'all') {
@@ -6688,6 +6825,61 @@ function buildRuleGroupHtml(match, navTarget, startCollapsed) {
         </div>
         <div class="hlr-rule-matches">${linesHtml}</div>
     </div>`;
+}
+
+function updateConfigHighlightResults() {
+    const panel = document.getElementById('configHighlightResults');
+    if (!panel) return;
+
+    if (!state.configHighlightRules.length || state.currentConfigFileIndex < 0) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const file = state.files[state.currentConfigFileIndex];
+    if (!file || !file.isConfig) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const parsed = state.parsedLogs.get(file.name) || file.lines;
+    const matches = countHighlightMatchesForFile(parsed, file.name, true, state.configHighlightRules);
+    const activeMatches = matches.filter(m => m.count > 0);
+
+    if (!activeMatches.length) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const totalMatches = activeMatches.reduce((s, m) => s + m.count, 0);
+    const rulesText = activeMatches.length === 1 ? '1 rule' : `${activeMatches.length} rules`;
+
+    const groupsHtml = activeMatches.map(m =>
+        buildRuleGroupHtml(m, `'config'`, true)
+    ).join('');
+
+    panel.style.display = '';
+    let expanded = false;
+    try {
+        expanded = localStorage.getItem('traka-config-hlr-expanded') === 'true';
+    } catch (e) {
+        expanded = false;
+    }
+    panel.classList.toggle('panel-collapsed', !expanded);
+    const isCollapsed = !expanded;
+    panel.innerHTML = `
+        <div class="hlr-header" onclick="toggleHlrPanel(this.parentElement)">
+            <div class="hlr-title">
+                <svg class="hlr-panel-chevron${isCollapsed ? '' : ' rotated'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                <svg class="hlr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                </svg>
+                <span>Highlight Results</span>
+                <span class="hlr-summary">${rulesText} &middot; ${totalMatches.toLocaleString()} matches</span>
+            </div>
+        </div>
+        <div class="hlr-body">${groupsHtml}</div>
+    `;
 }
 
 function updateViewerHighlightResults() {
@@ -6829,6 +7021,13 @@ function toggleHlrPanel(panelEl) {
             /* ignore */
         }
     }
+    if (panelEl.id === 'configHighlightResults') {
+        try {
+            localStorage.setItem('traka-config-hlr-expanded', (!panelEl.classList.contains('panel-collapsed')).toString());
+        } catch (e) {
+            /* ignore */
+        }
+    }
 }
 
 function toggleHlrGroup(headerEl) {
@@ -6843,6 +7042,44 @@ function navigateToHighlightLine(lineNumber, target) {
     if (target === 'viewer') {
         // Navigate in the main log viewer
         if (state.virtualScroll && state.virtualScroll.active) {
+            const vs = state.virtualScroll;
+            const logContentEl = document.getElementById('logContent');
+            if (vs.contentEl !== logContentEl) {
+                const lineEl = document.querySelector(`#logContent .log-line[data-line="${lineNumber}"]`);
+                if (lineEl) {
+                    lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    lineEl.classList.add('highlight');
+                    setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+                }
+                return;
+            }
+            const idx = vs.filteredLines.findIndex(e => e.lineNumber === lineNumber);
+            if (idx >= 0) {
+                const scrollPos = idx * vs.lineHeight - vs.contentEl.clientHeight / 2;
+                vs.contentEl.scrollTop = Math.max(0, scrollPos);
+                vs.lastRenderedStart = -1;
+                updateViewerViewport();
+                requestAnimationFrame(() => {
+                    const lineEl = vs.viewport.querySelector(`[data-line="${lineNumber}"]`);
+                    if (lineEl) {
+                        lineEl.classList.add('highlight');
+                        setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+                    }
+                });
+            } else {
+                showToast(`Line ${lineNumber} not found in current view`, 'warning');
+            }
+        } else {
+            const lineEl = document.querySelector(`#logContent .log-line[data-line="${lineNumber}"]`);
+            if (lineEl) {
+                lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                lineEl.classList.add('highlight');
+                setTimeout(() => lineEl.classList.remove('highlight'), 2000);
+            }
+        }
+    } else if (target === 'config') {
+        const cfgContent = document.getElementById('configLogContent');
+        if (state.virtualScroll && state.virtualScroll.active && state.virtualScroll.contentEl === cfgContent) {
             const vs = state.virtualScroll;
             const idx = vs.filteredLines.findIndex(e => e.lineNumber === lineNumber);
             if (idx >= 0) {
@@ -6861,7 +7098,7 @@ function navigateToHighlightLine(lineNumber, target) {
                 showToast(`Line ${lineNumber} not found in current view`, 'warning');
             }
         } else {
-            const lineEl = document.querySelector(`.log-line[data-line="${lineNumber}"]`);
+            const lineEl = document.querySelector(`#configLogContent .log-line[data-line="${lineNumber}"]`);
             if (lineEl) {
                 lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 lineEl.classList.add('highlight');
@@ -6919,6 +7156,28 @@ function loadHighlightRules() {
         }
     } catch (e) {
         console.error('Failed to load highlight rules:', e);
+    }
+}
+
+function saveConfigHighlightRules() {
+    try {
+        localStorage.setItem('traka-config-highlight-rules', JSON.stringify(state.configHighlightRules));
+    } catch (e) {
+        console.error('Failed to save config highlight rules:', e);
+    }
+}
+
+function loadConfigHighlightRules() {
+    try {
+        const saved = localStorage.getItem('traka-config-highlight-rules');
+        if (saved) {
+            state.configHighlightRules = JSON.parse(saved);
+            state.configHighlightRules.forEach(rule => {
+                if (!rule.targetFiles) rule.targetFiles = 'all';
+            });
+        }
+    } catch (e) {
+        console.error('Failed to load config highlight rules:', e);
     }
 }
 
@@ -7236,6 +7495,7 @@ function toggleCompareFullscreen() {
         }
         
         hideGlobalLoader();
+        requestAnimationFrame(() => refreshCompareVirtualScrollLayout());
     }, 50);
 }
 
@@ -7291,6 +7551,7 @@ function toggleMaximizePanel(panelIndex) {
                 });
             }
         }
+        requestAnimationFrame(() => refreshCompareVirtualScrollLayout());
     }
 }
 
@@ -7317,6 +7578,7 @@ function restoreAllPanels() {
             btn.title = 'Maximize this panel';
         }
     });
+    requestAnimationFrame(() => refreshCompareVirtualScrollLayout());
 }
 
 // ============================================
@@ -7416,6 +7678,7 @@ function restorePoppedOutPanel(panelIndex) {
     
     const shortLabel = getShortLabel(state.files[panelIndex]);
     showToast(`Restored "${shortLabel}" to main window`, 'success');
+    requestAnimationFrame(() => refreshCompareVirtualScrollLayout());
 }
 
 // ============================================
@@ -7453,6 +7716,7 @@ function toggleMinimizePanel(panelIndex) {
     
     // Rebuild dock and update layout
     updateMinimizedDock();
+    requestAnimationFrame(() => refreshCompareVirtualScrollLayout());
     
     const shortLabel = getShortLabel(state.files[panelIndex]);
     showToast(`Minimized "${shortLabel}" — click to restore`, 'info');
@@ -7478,6 +7742,7 @@ function restoreMinimizedPanel(panelIndex) {
     
     // Rebuild dock (may remove dock entirely if no more minimized panels)
     updateMinimizedDock();
+    requestAnimationFrame(() => refreshCompareVirtualScrollLayout());
     
     const shortLabel = getShortLabel(state.files[panelIndex]);
     showToast(`Restored "${shortLabel}"`, 'success');
