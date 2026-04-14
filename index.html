@@ -1004,82 +1004,227 @@
             <section class="page" id="page-tutorial">
                 <div class="page-header">
                     <h2>How to use Log Analyzer</h2>
-                    <p>A quick tour of loading files, each screen, and the main features.</p>
+                    <p>Load files, understand each area of the app, then use the tiles below to jump to a deeper guide for that page.</p>
                 </div>
 
                 <div class="tutorial-shell">
                     <div class="tutorial-lead">
-                        <p>Traka Log Analyzer opens logs and config files in your browser (or Desktop Edition). Load files once—they stay available as you move between tabs until you clear them.</p>
+                        <p><strong>Session model.</strong> Files you load stay in memory as you switch sidebar tabs (Home, Log Viewer, Compare, and so on). Log files power the viewer, compare, and issues; config files open on the <strong>Config</strong> tab. Use <strong>Clear All</strong> on Home, Log Viewer, Compare, or Config when you want a clean slate.</p>
+                        <p style="margin-top: 0.75rem;"><strong>Desktop Edition</strong> adds directory scan and “pop out” compare panels to separate windows where supported.</p>
                     </div>
 
                     <div class="tutorial-card tutorial-card-accent">
                         <h3 class="tutorial-card-title">
                             <span class="tutorial-step-num">1</span>
-                            Loading files
+                            Getting files in
                         </h3>
                         <ul class="tutorial-list">
-                            <li><strong>Home</strong> — Drag and drop files onto the drop zone, or click it to browse. Supported types include <code>.log</code>, <code>.txt</code>, and Traka <code>.cfg</code> / <code>.ini</code> style files.</li>
-                            <li><strong>Log Viewer, Compare, or Config</strong> — Use <strong>Load file</strong> / <strong>Add files</strong> / <strong>Load config</strong> in the toolbar on those pages.</li>
-                            <li><strong>Clear All</strong> — Available on Home, Log Viewer, Compare, and Config removes every loaded file and resets the session (you’ll be asked to confirm).</li>
+                            <li><strong>Home</strong> — Drag and drop onto the drop zone, or click to browse. Optional toggle controls whether issues are scanned on load (large logs load faster with scanning off).</li>
+                            <li><strong>Log Viewer</strong> — <strong>Load File</strong> adds logs (and configs, which then appear on Config too).</li>
+                            <li><strong>Compare</strong> — <strong>Add Files</strong> adds multiple logs and sorts them for side‑by‑side or stacked review.</li>
+                            <li><strong>Config</strong> — <strong>Load config</strong> focuses on <code>.cfg</code>, <code>.ini</code>, and similar files.</li>
+                            <li><strong>Formats</strong> — Typically <code>.log</code>, <code>.txt</code>, plus config extensions above.</li>
                         </ul>
-                        <p class="tutorial-note">On Desktop Edition you may also see options to scan Traka install folders or pick a custom directory.</p>
+                        <p class="tutorial-note">After <strong>Clear All</strong>, compare layout resets to side‑by‑side. Electron users may see <strong>Scan Traka Directories</strong> and related actions on Home.</p>
                     </div>
 
-                    <div class="tutorial-card">
+                    <div class="tutorial-card" id="tutorial-pages">
                         <h3 class="tutorial-card-title">
                             <span class="tutorial-step-num">2</span>
-                            What each page is for
+                            Pages at a glance — click a tile for full detail
                         </h3>
+                        <p class="tutorial-grid-intro">Hover for a short summary; <strong>click</strong> to scroll to what you can do on that page (toolbar, main area, and extras).</p>
                         <div class="tutorial-grid">
-                            <div class="tutorial-mini">
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-home">
                                 <h4>Home</h4>
-                                <p>Overview, quick load, and shortcuts into the rest of the app.</p>
-                            </div>
-                            <div class="tutorial-mini">
+                                <p>Launchpad: load files, stats, optional auto‑discovery, and Clear All.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-viewer">
                                 <h4>Log Viewer</h4>
-                                <p>Read one log at a time: search, filters, date range, issues, live tail, stitch multiple logs, highlight rules, and fullscreen.</p>
-                            </div>
-                            <div class="tutorial-mini">
+                                <p>Single‑file view: search, filters, stitch, live tail, highlight rules, fullscreen.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-config">
                                 <h4>Config</h4>
-                                <p>View <code>.cfg</code> / config-style files with syntax-friendly layout and separate highlight rules from logs.</p>
-                            </div>
-                            <div class="tutorial-mini">
+                                <p>Syntax‑friendly config view with its own highlight rules and Clear All.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-compare">
                                 <h4>Compare</h4>
-                                <p>Put several logs next to each other (or stacked top-to-bottom). Sync scroll, time sync, search across panels, pop-out or minimize panels, and fullscreen.</p>
-                            </div>
-                            <div class="tutorial-mini">
+                                <p>Multiple logs: layout, sync scroll, time sync, search, pop‑out / minimize / maximize.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-issues">
                                 <h4>Issues</h4>
-                                <p>List of detected problems across loaded logs; open an issue to jump to the line in the viewer.</p>
-                            </div>
-                            <div class="tutorial-mini">
+                                <p>All detected problems; open one to jump to the line in Log Viewer.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-analytics">
                                 <h4>Analytics</h4>
-                                <p>Charts and summaries when issues have been analyzed.</p>
-                            </div>
-                            <div class="tutorial-mini">
+                                <p>Charts for severity, timeline, top issues, and per‑file breakdown.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-faqs">
                                 <h4>FAQs</h4>
-                                <p>Browse known Traka issues and fixes from the knowledge base.</p>
-                            </div>
-                            <div class="tutorial-mini">
+                                <p>Knowledge base: search and category filters independent of your logs.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
+                            <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-settings">
                                 <h4>Settings</h4>
-                                <p>Detection options, appearance, and behaviour preferences.</p>
-                            </div>
+                                <p>Issue detection toggles, theme, font, word wrap, and related behaviour.</p>
+                                <span class="tutorial-mini-cta">Open guide →</span>
+                            </a>
                         </div>
                     </div>
 
-                    <div class="tutorial-card">
-                        <h3 class="tutorial-card-title">
-                            <span class="tutorial-step-num">3</span>
-                            Features worth knowing
-                        </h3>
-                        <ul class="tutorial-list tutorial-list-compact">
-                            <li><strong>Search</strong> — Find text in the viewer; on Compare, search runs across all open logs.</li>
-                            <li><strong>Highlight rules</strong> — Colour matching text in logs (and a separate set on the Config page).</li>
-                            <li><strong>Stitch files</strong> — Merge selected logs by timestamp in Log Viewer.</li>
-                            <li><strong>Live tail</strong> — Watch files grow as new lines are written (where supported).</li>
-                            <li><strong>Time sync</strong> — On Compare, line up the same moment in time across files.</li>
-                            <li><strong>Compare layout</strong> — Toolbar dropdown next to Fullscreen: side-by-side or stacked rows.</li>
+                    <div class="tutorial-section-label" id="tutorial-deep-dives">Page guides</div>
+
+                    <article class="tutorial-detail" id="tutorial-page-home">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">Home</h3>
+                        <p class="tutorial-detail-lead">Your entry point for loading data and seeing session‑wide stats.</p>
+                        <h4 class="tutorial-detail-sub">What you can do</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Drop zone</strong> — Drag files in or click to open the file picker.</li>
+                            <li><strong>Scan for issues when loading</strong> — Checkbox in the drop zone footer; turn off for very large logs if load feels slow.</li>
+                            <li><strong>Stats cards</strong> — Quick view of files loaded, total lines, and issue count; some cards jump to Log Viewer or Issues.</li>
+                            <li><strong>Loaded files list</strong> — When present, shows what is in memory.</li>
+                            <li><strong>Clear All</strong> — Same confirmation as other pages; clears everything and returns you here.</li>
+                            <li><strong>Desktop: discovery card</strong> — Scan install paths, custom folder, or browse when the app is packaged for Electron.</li>
                         </ul>
-                    </div>
+                    </article>
+
+                    <article class="tutorial-detail" id="tutorial-page-viewer">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">Log Viewer</h3>
+                        <p class="tutorial-detail-lead">Inspect one file at a time with rich filtering and tooling.</p>
+                        <h4 class="tutorial-detail-sub">Toolbar</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>File dropdown</strong> — Switch the active log (or config entry if loaded that way).</li>
+                            <li><strong>Live Tail</strong> — Follow new lines as the file grows (when the environment supports it).</li>
+                            <li><strong>Highlight Rules</strong> — Custom colours for patterns; applies to log/compare rules (not Config rules).</li>
+                            <li><strong>Load File</strong> — Add or replace files in the session.</li>
+                            <li><strong>Stitch Files</strong> — Pick several logs, order them, merge by timestamp into one stitched view.</li>
+                            <li><strong>Clear All</strong> — Wipes the whole session after confirmation.</li>
+                            <li><strong>Fullscreen</strong> — Edge‑to‑edge viewer; sidebar hides for focus.</li>
+                        </ul>
+                        <h4 class="tutorial-detail-sub">Search & filters</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Search box</strong> — Plain text or regex (where indicated); optional highlight of matches.</li>
+                            <li><strong>Level / category chips</strong> — Narrow by log level and issue type.</li>
+                            <li><strong>Date range</strong> — Limit lines by time when timestamps are present.</li>
+                            <li><strong>Collapsible filter bar</strong> — More room for log text when collapsed.</li>
+                        </ul>
+                        <h4 class="tutorial-detail-sub">Log area & footer</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Line numbers</strong> — Gutter syncs with scroll when enabled in settings.</li>
+                            <li><strong>Stitched logs</strong> — After stitching, a compact source legend appears (collapsible; hidden in fullscreen).</li>
+                            <li><strong>Highlight results panel</strong> — Summarises custom rule hits; expand or collapse as needed.</li>
+                            <li><strong>Go to line</strong> — Jump to a line number in the current file.</li>
+                            <li><strong>Viewer stats</strong> — File name, line counts, and filter context in the footer.</li>
+                        </ul>
+                    </article>
+
+                    <article class="tutorial-detail" id="tutorial-page-config">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">Config viewer</h3>
+                        <p class="tutorial-detail-lead">Read <code>.cfg</code> / <code>.ini</code> style files with highlighting suited to sections and key=value lines.</p>
+                        <h4 class="tutorial-detail-sub">Toolbar & actions</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Config file dropdown</strong> — Choose which loaded config file is shown.</li>
+                            <li><strong>Load config</strong> — Add configs without leaving this tab.</li>
+                            <li><strong>Highlight Rules</strong> — Separate rule list from Log Viewer; only affects this page.</li>
+                            <li><strong>Clear All</strong> — Clears logs and configs everywhere after confirmation.</li>
+                        </ul>
+                        <h4 class="tutorial-detail-sub">View</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Syntax styling</strong> — Sections, comments, and keys are visually distinct.</li>
+                            <li><strong>Go to line</strong> — Same idea as the log viewer footer control.</li>
+                            <li><strong>Highlight results</strong> — Appears when config highlight rules match lines.</li>
+                        </ul>
+                    </article>
+
+                    <article class="tutorial-detail" id="tutorial-page-compare">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">Compare</h3>
+                        <p class="tutorial-detail-lead">Line up several logs with shared scrolling, search, and layout options.</p>
+                        <h4 class="tutorial-detail-sub">Toolbar</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Add Files</strong> — Load multiple logs into compare panels.</li>
+                            <li><strong>Live Tail</strong> — Applies across visible panels where supported.</li>
+                            <li><strong>Sync Scroll</strong> — Keeps panels aligned when you scroll.</li>
+                            <li><strong>Time Sync</strong> — Aligns lines around the same timestamp across files.</li>
+                            <li><strong>Highlight Differences</strong> — Visual compare assist (see on‑screen legend when used).</li>
+                            <li><strong>Highlight Rules</strong> — Same rule set as Log Viewer / compare context.</li>
+                            <li><strong>Clear All</strong> — Session reset with confirmation.</li>
+                            <li><strong>Fullscreen</strong> — Uses the whole window for compare.</li>
+                            <li><strong>Layout dropdown</strong> — Next to Fullscreen: <em>Side by side</em> columns or <em>Stacked</em> rows sharing height evenly.</li>
+                            <li><strong>Search</strong> — Unified search across all compare panels; toggle highlight vs filter‑to‑matches where offered.</li>
+                        </ul>
+                        <h4 class="tutorial-detail-sub">Each panel</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Pop out</strong> — Desktop only: detach a panel to its own window.</li>
+                            <li><strong>Minimize</strong> — Dock the panel to the bottom strip; click the chip to restore.</li>
+                            <li><strong>Maximize</strong> — Focus one panel; press Esc or use the control again to restore.</li>
+                            <li><strong>Remove</strong> — Drop that file from the session.</li>
+                        </ul>
+                        <h4 class="tutorial-detail-sub">Below the panels</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Highlight results</strong> — Aggregate hits for compare.</li>
+                            <li><strong>Time sync info</strong> — Status and hints when time sync is active.</li>
+                        </ul>
+                    </article>
+
+                    <article class="tutorial-detail" id="tutorial-page-issues">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">Issues</h3>
+                        <p class="tutorial-detail-lead">Every detected issue from loaded logs, in one sortable list.</p>
+                        <h4 class="tutorial-detail-sub">What you can do</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Filter by severity / category</strong> — Narrow the list with the same concepts as the viewer chips.</li>
+                            <li><strong>Open an issue</strong> — See detail; use actions to jump to the exact line in Log Viewer when available.</li>
+                            <li><strong>Empty state</strong> — If nothing is flagged, load logs or enable detection types in Settings.</li>
+                        </ul>
+                    </article>
+
+                    <article class="tutorial-detail" id="tutorial-page-analytics">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">Analytics</h3>
+                        <p class="tutorial-detail-lead">Visual summaries after issues have been computed for your logs.</p>
+                        <h4 class="tutorial-detail-sub">What you can do</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Severity chart</strong> — Distribution of critical / high / medium / low style findings.</li>
+                            <li><strong>Timeline</strong> — How issues appear over time; change granularity where a control is provided.</li>
+                            <li><strong>Top issues & by file</strong> — Which patterns dominate and how they split across files.</li>
+                            <li><strong>Insights cards</strong> — Narrative takeaways at a glance.</li>
+                            <li><strong>Refresh</strong> — Use chart refresh actions if the data was updated after first render.</li>
+                        </ul>
+                    </article>
+
+                    <article class="tutorial-detail" id="tutorial-page-faqs">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">FAQs & knowledge base</h3>
+                        <p class="tutorial-detail-lead">Curated Traka issues and fixes — useful even when your current logs do not contain a given error.</p>
+                        <h4 class="tutorial-detail-sub">What you can do</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Search</strong> — Filter articles by keyword.</li>
+                            <li><strong>Category buttons</strong> — Limit to configuration, security, database, etc.</li>
+                            <li><strong>Expand entries</strong> — Read symptoms, causes, and suggested actions per article layout.</li>
+                        </ul>
+                    </article>
+
+                    <article class="tutorial-detail" id="tutorial-page-settings">
+                        <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
+                        <h3 class="tutorial-detail-title">Settings</h3>
+                        <p class="tutorial-detail-lead">Control how aggressively the tool analyses logs and how content looks.</p>
+                        <h4 class="tutorial-detail-sub">What you can do</h4>
+                        <ul class="tutorial-list">
+                            <li><strong>Detection toggles</strong> — Turn issue classes (errors, timeouts, auth, DB, etc.) on or off.</li>
+                            <li><strong>Appearance</strong> — Theme, font size, line numbers, word wrap, and related display options.</li>
+                            <li><strong>Save / Reset</strong> — Persist your choices or return to defaults.</li>
+                        </ul>
+                    </article>
 
                     <div class="tutorial-footer-cta">
                         <button type="button" class="btn btn-primary" onclick="navigateTo('home')">
