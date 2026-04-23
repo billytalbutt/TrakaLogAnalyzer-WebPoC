@@ -304,6 +304,11 @@
                             </svg>
                             Stitch Files
                         </button>
+                        <button class="btn btn-secondary viewer-fullscreen-btn" id="viewerFullscreenToggleTop" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            </svg>
+                        </button>
                         <button class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs" style="color: var(--error-color);">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"></polyline>
@@ -312,11 +317,6 @@
                                 <line x1="14" y1="11" x2="14" y2="17"></line>
                             </svg>
                             Clear All
-                        </button>
-                        <button class="btn btn-secondary viewer-fullscreen-btn" id="viewerFullscreenToggleTop" onclick="toggleLogViewerFullscreen()" title="Toggle fullscreen mode">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
-                            </svg>
                         </button>
                         <input type="file" id="viewerFileInput" accept=".log,.LOG,.txt,.TXT,.cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
                     </div>
@@ -537,14 +537,6 @@
                         </select>
                     </div>
                     <div class="toolbar-actions">
-                        <button class="btn btn-secondary" onclick="document.getElementById('configFileInput').click()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="17 8 12 3 7 8"></polyline>
-                                <line x1="12" y1="3" x2="12" y2="15"></line>
-                            </svg>
-                            Load config
-                        </button>
                         <button class="btn btn-secondary" id="configHighlightRulesBtn" onclick="openHighlightRulesModal('config')" title="Custom text highlighting for config files only (separate from Log Viewer rules)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M12 20h9"></path>
@@ -552,14 +544,20 @@
                             </svg>
                             Highlight Rules
                         </button>
-                        <button type="button" class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs and config files" style="color: var(--error-color);">
+                        <button type="button" class="btn btn-secondary" id="configHighlightDiffBtn" style="display: none;" onclick="highlightDifferencesConfigMulti()" title="Highlight lines unique to one config vs the others (config files only; does not use Compare or log panels)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                <line x1="10" y1="11" x2="10" y2="17"></line>
-                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                                <path d="M12 3v18"></path>
+                                <path d="M5 10l7-7 7 7"></path>
                             </svg>
-                            Clear All
+                            Highlight Differences
+                        </button>
+                        <button class="btn btn-secondary" onclick="document.getElementById('configFileInput').click()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            Load config
                         </button>
                         <select id="configViewModeSelect" class="file-dropdown config-view-mode-select" onchange="setConfigViewMode(this.value)" title="Single file: one config at a time. Multi-view: all loaded configs like Compare (side by side or stacked)." aria-label="Config view mode">
                             <option value="single">Single file</option>
@@ -569,12 +567,14 @@
                             <option value="sideBySide">Side by side</option>
                             <option value="stacked">Stacked (top to bottom)</option>
                         </select>
-                        <button type="button" class="btn btn-secondary" id="configHighlightDiffBtn" style="display: none;" onclick="highlightDifferencesConfigMulti()" title="Highlight lines unique to one config vs the others (config files only; does not use Compare or log panels)">
+                        <button type="button" class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs and config files" style="color: var(--error-color);">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 3v18"></path>
-                                <path d="M5 10l7-7 7 7"></path>
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
                             </svg>
-                            Highlight Differences
+                            Clear All
                         </button>
                         <input type="file" id="configFileInput" accept=".cfg,.CFG,.ini,.INI,.config,.CONFIG" multiple hidden>
                     </div>
@@ -618,11 +618,25 @@
             <section class="page" id="page-compare">
                 <div class="page-header">
                     <h2>Compare Logs</h2>
-                    <p>Compare multiple log files side by side or stacked top to bottom (toolbar control next to Fullscreen).</p>
+                    <p>Compare multiple log files side by side or stacked top to bottom (layout dropdown before Clear All).</p>
                 </div>
                 
                 <div class="compare-toolbar">
                     <div class="compare-actions">
+                        <button class="btn btn-secondary" onclick="highlightDifferences()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 3v18"></path>
+                                <path d="M5 10l7-7 7 7"></path>
+                            </svg>
+                            Highlight Differences
+                        </button>
+                        <button class="btn btn-secondary" id="compareHighlightRulesBtn" onclick="openHighlightRulesModal('logs')" title="Custom text highlighting rules (BareTail-style)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg>
+                            Highlight Rules
+                        </button>
                         <button class="btn btn-secondary" onclick="document.getElementById('compareFileInput').click()">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -656,29 +670,6 @@
                             </svg>
                             Time Sync
                         </button>
-                        <button class="btn btn-secondary" onclick="highlightDifferences()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 3v18"></path>
-                                <path d="M5 10l7-7 7 7"></path>
-                            </svg>
-                            Highlight Differences
-                        </button>
-                        <button class="btn btn-secondary" id="compareHighlightRulesBtn" onclick="openHighlightRulesModal('logs')" title="Custom text highlighting rules (BareTail-style)">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 20h9"></path>
-                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                            </svg>
-                            Highlight Rules
-                        </button>
-                        <button type="button" class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs and config files" style="color: var(--error-color);">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                <line x1="10" y1="11" x2="10" y2="17"></line>
-                                <line x1="14" y1="11" x2="14" y2="17"></line>
-                            </svg>
-                            Clear All
-                        </button>
                         <button class="btn btn-secondary" id="compareFullscreenToggle" onclick="toggleCompareFullscreen()" title="Toggle fullscreen mode">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
@@ -689,6 +680,15 @@
                             <option value="sideBySide">Side by side</option>
                             <option value="stacked">Stacked (top to bottom)</option>
                         </select>
+                        <button type="button" class="btn btn-secondary" onclick="confirmClearAllLogs()" title="Clear all loaded logs and config files" style="color: var(--error-color);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                            </svg>
+                            Clear All
+                        </button>
                     </div>
                     <div class="unified-search">
                         <div class="search-box">

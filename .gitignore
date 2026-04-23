@@ -6,3 +6,5 @@ build/sfx/
 *.log
 .DS_Store
 *.backup
+app_error.txt
+app_output.txt

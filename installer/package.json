@@ -1,0 +1,52 @@
+{
+  "name": "traka-log-analyzer-installer",
+  "version": "3.0.0",
+  "description": "Traka Log Analyzer - Setup Wizard",
+  "main": "src/main.js",
+  "author": {
+    "name": "Traka",
+    "email": "support@traka.com"
+  },
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:dir": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.traka.loganalyzer.installer",
+    "productName": "Traka Log Analyzer Setup",
+    "copyright": "Copyright (c) 2026 Traka, an ASSA ABLOY company",
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "../build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "Traka Log Analyzer Setup ${version}.exe"
+    },
+    "files": [
+      "src/**/*",
+      "!src/**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/win-unpacked",
+        "to": "app-payload",
+        "filter": ["**/*"]
+      }
+    ],
+    "directories": {
+      "output": "../dist-installer",
+      "buildResources": "../build"
+    }
+  }
+}

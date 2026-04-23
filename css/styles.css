@@ -48,6 +48,9 @@
     
     --sidebar-width: 260px;
     --sidebar-collapsed-width: 60px;
+
+    /* Log / Config / Compare toolbars: shared row height for buttons + selects */
+    --toolbar-row-height: 3rem;
 }
 
 /* Reset & Base */
@@ -554,10 +557,12 @@ body {
     color: var(--text-tertiary);
 }
 
+/* Home only: Clear All sits under the drop zone copy (centred); other pages keep Clear All on the right */
 .home-clear-actions {
     display: flex;
     justify-content: center;
     width: 100%;
+    max-width: 100%;
     margin-top: 1rem;
 }
 
@@ -1015,6 +1020,39 @@ body {
     flex-wrap: wrap;
     align-items: center;
     gap: 0.75rem;
+}
+
+/* Equal-height toolbar controls (Log Viewer + Config Viewer file row) */
+.viewer-toolbar .file-selector > select.file-dropdown,
+.config-viewer-toolbar .file-selector > select.file-dropdown {
+    min-height: var(--toolbar-row-height);
+    height: var(--toolbar-row-height);
+    display: inline-flex;
+    align-items: center;
+    padding-top: 0;
+    padding-bottom: 0;
+    line-height: 1.25;
+}
+
+.viewer-toolbar .toolbar-actions > .btn:not(.btn-icon),
+.viewer-toolbar .toolbar-actions > select.file-dropdown,
+.config-viewer-toolbar .toolbar-actions > .btn:not(.btn-icon),
+.config-viewer-toolbar .toolbar-actions > select.file-dropdown,
+.compare-actions > .btn.btn-secondary:not(.compare-search-mode-btn),
+.compare-actions > select.file-dropdown {
+    min-height: var(--toolbar-row-height);
+    height: var(--toolbar-row-height);
+    box-sizing: border-box;
+}
+
+.viewer-toolbar .toolbar-actions > select.file-dropdown,
+.config-viewer-toolbar .toolbar-actions > select.file-dropdown,
+.compare-actions > select.file-dropdown {
+    display: inline-flex;
+    align-items: center;
+    padding-top: 0;
+    padding-bottom: 0;
+    line-height: 1.25;
 }
 
 /* Search & Filter Bar */
@@ -1865,11 +1903,12 @@ mark.compare-search-hl {
     align-items: center;
 }
 
-/* Compare layout dropdown (no label — sits next to Fullscreen in toolbar) */
+/* Compare / config multi layout dropdown — height from --toolbar-row-height */
 .compare-layout-select {
     min-width: 11.5rem;
     max-width: 14rem;
-    padding: 0.4rem 0.6rem;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
     flex-shrink: 0;
 }
 
