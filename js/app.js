@@ -402,6 +402,11 @@ async function loadFileFromPath(filePath, engineType = null, skipUIUpdate = fals
                 if (fileData.skipIssueAnalysis) {
                     updateIssuesUI();
                 }
+            } else {
+                runConfigValidation(fileData);
+                // Cross-cutting OnGuard rules (dual-config presence) need a re-check
+                // on every other already-loaded config too.
+                rerunConfigRulesOnAllLoadedConfigs();
             }
             
             // Update UI components if not skipping
@@ -912,6 +917,8 @@ const state = {
     compareSearchFilterMode: false, // false = highlight mode, true = filter (show matches only)
     /** Compare page panel layout: 'sideBySide' (columns) or 'stacked' (rows, top to bottom) */
     compareLayout: 'sideBySide',
+    /** Config validation master switch (mirrors the Home toggle "Validate config files when loading"). */
+    configRulesEnabled: true,
     dateFromPicker: null, // Flatpickr instance for start date
     dateToPicker: null, // Flatpickr instance for end date
     engineFilters: {
@@ -952,7 +959,9 @@ const state = {
         tailRefreshInterval: 1000, // 1 second refresh for live tail
         maxTailLines: 10000, // Maximum lines to keep in tail mode
         /** When false, new loads skip issue detection and log line error/warn CSS (faster for huge logs). */
-        processIssuesOnLoad: true
+        processIssuesOnLoad: true,
+        /** When false, loaded config files are NOT validated against Traka product config rules. */
+        validateConfigsOnLoad: true
     }
 };
 
@@ -974,6 +983,35 @@ function persistProcessIssuesOnLoadPreference() {
     const checked = isProcessIssuesOnLoadEnabled();
     state.settings.processIssuesOnLoad = checked;
     syncProcessIssuesOnLoadCheckboxes(checked);
+    try {
+        localStorage.setItem('trakaLogAnalyzerSettings', JSON.stringify(state.settings));
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+/**
+ * Sync the "Validate config files when loading" Home toggle checkbox.
+ */
+function syncValidateConfigsOnLoadCheckboxes(checked) {
+    const el = document.getElementById('validateConfigsOnLoad');
+    if (el) el.checked = !!checked;
+    const masterEl = document.getElementById('configRulesMasterToggle');
+    if (masterEl) masterEl.checked = !!checked;
+    state.configRulesEnabled = !!checked;
+}
+
+function isValidateConfigsOnLoadEnabled() {
+    const el = document.getElementById('validateConfigsOnLoad');
+    if (el) return el.checked;
+    return state.settings.validateConfigsOnLoad !== false;
+}
+
+function persistValidateConfigsOnLoadPreference(force) {
+    const checked = (typeof force === 'boolean') ? force : isValidateConfigsOnLoadEnabled();
+    state.settings.validateConfigsOnLoad = checked;
+    state.configRulesEnabled = checked;
+    syncValidateConfigsOnLoadCheckboxes(checked);
     try {
         localStorage.setItem('trakaLogAnalyzerSettings', JSON.stringify(state.settings));
     } catch (e) {
@@ -1090,6 +1128,12 @@ function initializeApp() {
         loadCompareLayout();
         loadConfigViewMode();
         loadConfigMultiLayout();
+
+        console.log('  ✓ Loading config validation rules state...');
+        if (window.TrakaConfigRules) {
+            window.TrakaConfigRules.loadConfigRulesState();
+        }
+        initConfigValidationToggles();
         
         console.log('  ✓ Updating UI...');
         updateUI();
@@ -1774,6 +1818,11 @@ function loadFile(file, skipNavigation = false, suppressToast = false, onLoaded 
             if (fileData.skipIssueAnalysis) {
                 updateIssuesUI();
             }
+        } else {
+            runConfigValidation(fileData);
+            // Cross-cutting OnGuard rules (dual-config presence) need a re-check
+            // on every other already-loaded config too.
+            rerunConfigRulesOnAllLoadedConfigs();
         }
         
         // Update UI
@@ -2233,6 +2282,396 @@ function formatConfigLineInnerHtml(entry, fileName) {
     return highlightedLine;
 }
 
+// ============================================
+// Config validation (TrakaConfigRules integration)
+// ============================================
+
+const CONFIG_ISSUE_PREFIX = 'cfg::';
+
+/**
+ * Run TrakaConfigRules against a single loaded config file.
+ * Stores findings on fileData and merges them into state.issues
+ * with category 'config' so the existing Issues UI lights up.
+ */
+function runConfigValidation(fileData) {
+    if (!fileData || !fileData.isConfig) return;
+    if (typeof window === 'undefined' || !window.TrakaConfigRules) return;
+    if (!isValidateConfigsOnLoadEnabled()) {
+        // Strip any previous config issues for this file but leave fileData.configFindings alone.
+        state.issues = state.issues.filter(i => !(i.category === 'config' && i.file === fileData.name));
+        fileData.configFindings = [];
+        return;
+    }
+
+    try {
+        const allConfigFileNames = state.files.filter(f => f.isConfig).map(f => f.name);
+        const result = window.TrakaConfigRules.analyzeConfigFile(fileData, { allConfigFileNames });
+        fileData.configFindings = result.findings || [];
+        fileData.detectedConfigProduct = result.productId;
+        fileData.detectedConfigConfidence = result.productConfidence;
+        fileData.detectedConfigReasons = result.productReasons || [];
+        fileData.configRulesConsidered = result.rulesConsidered || [];
+        fileData.configParseError = (result.parsed && result.parsed.parseError) || null;
+        fileData.configFormat = (result.parsed && result.parsed.format) || 'unknown';
+
+        // Drop existing config-category issues for this file.
+        state.issues = state.issues.filter(i => !(i.category === 'config' && i.file === fileData.name));
+
+        // Add the new ones.
+        const ts = Date.now();
+        result.findings.forEach((f, idx) => {
+            state.issues.push({
+                id: CONFIG_ISSUE_PREFIX + fileData.name + '::' + f.ruleId + '::' + idx + '::' + ts,
+                file: fileData.name,
+                line: f.line || 1,
+                content: '',
+                severity: f.severity || 'warning',
+                category: 'config',
+                title: f.title,
+                description: f.message || f.title,
+                pattern: f.ruleId,
+                hasSolution: false,
+                isConfigFinding: true,
+                configFinding: f
+            });
+        });
+
+        // Sort by severity to match log issues.
+        const severityOrder = { critical: 0, error: 1, warning: 2, performance: 3, info: 4 };
+        state.issues.sort((a, b) => (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9));
+    } catch (err) {
+        console.error('runConfigValidation failed for', fileData.name, err);
+    }
+}
+
+/**
+ * After loading or removing configs, the "dual config" / cross-file rules need
+ * to be re-evaluated for every loaded config in the session.
+ */
+function rerunConfigRulesOnAllLoadedConfigs() {
+    const configs = state.files.filter(f => f.isConfig);
+    for (const cfg of configs) {
+        runConfigValidation(cfg);
+    }
+    updateIssuesUI();
+    if (state.configViewMode === 'multi') {
+        renderConfigMultiView();
+    } else {
+        const cur = state.currentConfigFileIndex >= 0 ? state.files[state.currentConfigFileIndex] : null;
+        updateConfigFindingsPanel(cur && cur.isConfig ? cur : null);
+    }
+}
+
+/**
+ * Re-runs config rules on all loaded configs and shows a summary toast. Used
+ * by the modal's "Re-run on loaded configs" button.
+ */
+function rerunConfigRulesOnLoadedFiles() {
+    const configs = state.files.filter(f => f.isConfig);
+    if (!configs.length) {
+        showToast('No config files loaded', 'info');
+        return;
+    }
+    rerunConfigRulesOnAllLoadedConfigs();
+    const total = state.issues.filter(i => i.category === 'config').length;
+    showToast(`Re-ran config rules on ${configs.length} file(s) — ${total} finding${total === 1 ? '' : 's'}`, total > 0 ? 'warning' : 'success');
+}
+
+/**
+ * Render the "Config rule findings" panel under the single-file config view.
+ * Mirrors the layout of #configHighlightResults so it visually fits in.
+ */
+function updateConfigFindingsPanel(fileData) {
+    const panel = document.getElementById('configFindingsPanel');
+    if (!panel) return;
+
+    if (state.configViewMode === 'multi') {
+        panel.style.display = 'none';
+        return;
+    }
+    if (!fileData || !fileData.isConfig) {
+        panel.style.display = 'none';
+        return;
+    }
+    if (!isValidateConfigsOnLoadEnabled()) {
+        panel.style.display = '';
+        panel.innerHTML = `
+            <div class="hlr-header">
+                <div class="hlr-title">
+                    <svg class="hlr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <span>Config rules</span>
+                    <span class="hlr-summary">Validation disabled — turn on "Validate config files when loading" on Home or in Config Rules.</span>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    const findings = Array.isArray(fileData.configFindings) ? fileData.configFindings : [];
+    const considered = Array.isArray(fileData.configRulesConsidered) ? fileData.configRulesConsidered : [];
+    const ranCount = considered.filter(c => !c.skipped).length;
+    const skippedCount = considered.filter(c => c.skipped).length;
+    const productLabel = prettyProductLabel(fileData.detectedConfigProduct);
+    const productKnown = fileData.detectedConfigProduct && fileData.detectedConfigProduct !== 'unknown'
+        && fileData.detectedConfigProduct !== 'generic_xml' && fileData.detectedConfigProduct !== 'generic_json';
+
+    // Build the "what was checked" expander body — always available so users can
+    // confirm the work was done, even on a clean config.
+    const checkedRowsHtml = considered.map(c => {
+        const status = c.error
+            ? `<span class="cfg-checked-status cfg-error" title="${escapeHtml(c.error)}">errored</span>`
+            : c.skipped
+                ? `<span class="cfg-checked-status cfg-skipped" title="${escapeHtml(c.skipReason || 'disabled')}">skipped</span>`
+                : c.fired
+                    ? `<span class="cfg-checked-status cfg-fired">flagged</span>`
+                    : `<span class="cfg-checked-status cfg-clean">ok</span>`;
+        return `
+            <li class="cfg-checked-row">
+                <span class="cfg-sev-dot cfg-${escapeHtml(c.severity)}"></span>
+                <span class="cfg-checked-title">${escapeHtml(c.title)}</span>
+                ${status}
+                <code class="cfg-checked-id">${escapeHtml(c.ruleId)}</code>
+            </li>
+        `;
+    }).join('');
+
+    if (!findings.length) {
+        // Healthy config — make it visibly obvious validation actually ran.
+        const productNote = productKnown
+            ? `Detected as <strong>${escapeHtml(productLabel)}</strong>.`
+            : `Could not match this file to a specific Traka product (it ran the generic <code>${escapeHtml(fileData.configFormat || 'unknown')}</code> sanity rules only). To get product-specific rules, name the file e.g. <code>Traka.Integration.CCURE9000.cfg</code>.`;
+        const ranNote = ranCount > 0
+            ? `Checked <strong>${ranCount}</strong> rule${ranCount === 1 ? '' : 's'}${skippedCount ? ` (skipped ${skippedCount})` : ''} — no issues found.`
+            : `<span style="color: var(--accent-warning);">No rules ran. Open <strong>Config Rules</strong> to enable a product pack.</span>`;
+        const parseNote = fileData.configParseError
+            ? `<div class="cfg-clean-warn">Parser error: <code>${escapeHtml(fileData.configParseError)}</code></div>`
+            : '';
+
+        panel.style.display = '';
+        panel.innerHTML = `
+            <div class="hlr-header" onclick="toggleConfigFindingsPanel(this.parentElement)">
+                <div class="hlr-title">
+                    <svg class="hlr-panel-chevron rotated" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <svg class="hlr-icon cfg-clean-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>
+                    <span>Config validation passed</span>
+                    <span class="hlr-summary cfg-findings-clean">${escapeHtml(productLabel)} · ${ranCount} rule${ranCount === 1 ? '' : 's'} checked · 0 issues</span>
+                </div>
+            </div>
+            <div class="hlr-body cfg-findings-body">
+                <div class="cfg-clean-block">
+                    <div class="cfg-clean-line">${productNote}</div>
+                    <div class="cfg-clean-line">${ranNote}</div>
+                    ${parseNote}
+                </div>
+                ${considered.length ? `
+                    <details class="cfg-checked-details">
+                        <summary>Show what was checked (${considered.length})</summary>
+                        <ul class="cfg-checked-list">${checkedRowsHtml}</ul>
+                    </details>
+                ` : ''}
+            </div>
+        `;
+        return;
+    }
+
+    const counts = { error: 0, warning: 0, info: 0 };
+    findings.forEach(f => { counts[f.severity] = (counts[f.severity] || 0) + 1; });
+
+    let expanded = true;
+    try {
+        const saved = localStorage.getItem('traka-config-findings-expanded');
+        if (saved !== null) expanded = saved === 'true';
+    } catch (e) { /* ignore */ }
+    panel.classList.toggle('panel-collapsed', !expanded);
+    const isCollapsed = !expanded;
+
+    const rowsHtml = findings.map((f, idx) => `
+        <div class="cfg-finding-row cfg-${escapeHtml(f.severity)}" data-finding-idx="${idx}" onclick="jumpToConfigFindingLine(${f.line || 0})">
+            <span class="cfg-finding-sev cfg-${escapeHtml(f.severity)}">${escapeHtml(String(f.severity).toUpperCase())}</span>
+            <div class="cfg-finding-body">
+                <div class="cfg-finding-title">${escapeHtml(f.title)}</div>
+                ${f.message && f.message !== f.title ? `<div class="cfg-finding-message">${escapeHtml(f.message)}</div>` : ''}
+                ${f.hint ? `<div class="cfg-finding-hint">Hint: ${escapeHtml(f.hint)}</div>` : ''}
+            </div>
+            <span class="cfg-finding-line" title="Jump to line">L${f.line || '?'}</span>
+        </div>
+    `).join('');
+
+    const summaryParts = [];
+    if (counts.error)   summaryParts.push(`${counts.error} error${counts.error === 1 ? '' : 's'}`);
+    if (counts.warning) summaryParts.push(`${counts.warning} warning${counts.warning === 1 ? '' : 's'}`);
+    if (counts.info)    summaryParts.push(`${counts.info} info`);
+
+    panel.style.display = '';
+    panel.innerHTML = `
+        <div class="hlr-header" onclick="toggleConfigFindingsPanel(this.parentElement)">
+            <div class="hlr-title">
+                <svg class="hlr-panel-chevron${isCollapsed ? '' : ' rotated'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                <svg class="hlr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>Config rule findings</span>
+                <span class="hlr-summary">${escapeHtml(productLabel)} · ${ranCount} rule${ranCount === 1 ? '' : 's'} checked · ${summaryParts.join(' · ')}</span>
+            </div>
+        </div>
+        <div class="hlr-body cfg-findings-body">
+            ${rowsHtml}
+            ${considered.length ? `
+                <details class="cfg-checked-details">
+                    <summary>Show what was checked (${considered.length})</summary>
+                    <ul class="cfg-checked-list">${checkedRowsHtml}</ul>
+                </details>
+            ` : ''}
+        </div>
+    `;
+}
+
+function toggleConfigFindingsPanel(panelEl) {
+    if (!panelEl) return;
+    const isCollapsed = panelEl.classList.toggle('panel-collapsed');
+    const chevron = panelEl.querySelector('.hlr-panel-chevron');
+    if (chevron) chevron.classList.toggle('rotated', !isCollapsed);
+    try {
+        localStorage.setItem('traka-config-findings-expanded', String(!isCollapsed));
+    } catch (e) { /* ignore */ }
+}
+
+function jumpToConfigFindingLine(lineNum) {
+    if (!lineNum || lineNum < 1) return;
+    const input = document.getElementById('configJumpToLine');
+    if (input) input.value = String(lineNum);
+    if (state.configViewMode === 'multi') {
+        // In multi-view, switch to single view first so we can scroll to the line.
+        setConfigViewMode('single');
+        setTimeout(() => jumpToConfigLine(), 150);
+    } else {
+        jumpToConfigLine();
+    }
+}
+
+/**
+ * Multi-view "X findings" badge handler. Switches to single view, selects the
+ * file, and renders it.
+ */
+function openConfigInSingleView(fileIndex) {
+    if (fileIndex < 0 || fileIndex >= state.files.length) return;
+    const file = state.files[fileIndex];
+    if (!file || !file.isConfig) return;
+    state.currentConfigFileIndex = fileIndex;
+    setConfigViewMode('single');
+    const dropdown = document.getElementById('configFileSelect');
+    if (dropdown) dropdown.value = file.name;
+    displayConfigFile(file);
+}
+
+function prettyProductLabel(productId) {
+    if (!productId) return 'Unknown product';
+    if (window.TrakaConfigRules && window.TrakaConfigRules.RULE_REGISTRY) {
+        const pack = window.TrakaConfigRules.RULE_REGISTRY.find(p => p.product === productId);
+        if (pack) return pack.productLabel;
+    }
+    return productId;
+}
+
+// ============================================
+// Config Rules Modal
+// ============================================
+function openConfigRulesModal() {
+    if (!window.TrakaConfigRules) return;
+    const modal = document.getElementById('configRulesModal');
+    if (!modal) return;
+    // Make sure the master toggle reflects current state.
+    const master = document.getElementById('configRulesMasterToggle');
+    if (master) master.checked = isValidateConfigsOnLoadEnabled();
+    renderConfigRulesAccordion();
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+}
+
+function closeConfigRulesModal() {
+    const modal = document.getElementById('configRulesModal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.style.display = 'none';
+}
+
+function renderConfigRulesAccordion() {
+    const container = document.getElementById('configRulesAccordion');
+    if (!container || !window.TrakaConfigRules) return;
+    const registry = window.TrakaConfigRules.RULE_REGISTRY;
+
+    container.innerHTML = registry.map(pack => {
+        const productEnabled = window.TrakaConfigRules.isProductEnabled(pack.product);
+        const ruleRows = pack.rules.map(rule => {
+            const enabled = window.TrakaConfigRules.isRuleEnabled(rule.id);
+            return `
+                <li class="cfg-rule-row">
+                    <label class="cfg-rule-toggle">
+                        <input type="checkbox" ${enabled ? 'checked' : ''} ${productEnabled ? '' : 'disabled'} onchange="onConfigRuleToggle('${escapeForJs(rule.id)}', this.checked)">
+                        <span class="cfg-rule-info">
+                            <span class="cfg-rule-title">
+                                <span class="cfg-sev-dot cfg-${escapeHtml(rule.severity || 'info')}"></span>
+                                ${escapeHtml(rule.title)}
+                            </span>
+                            ${rule.hint ? `<span class="cfg-rule-hint">${escapeHtml(rule.hint)}</span>` : ''}
+                            <code class="cfg-rule-id">${escapeHtml(rule.id)}</code>
+                        </span>
+                    </label>
+                </li>
+            `;
+        }).join('');
+
+        return `
+            <details class="cfg-rule-pack" ${productEnabled ? 'open' : ''}>
+                <summary>
+                    <span class="cfg-rule-pack-summary">
+                        <span class="cfg-rule-pack-title">${escapeHtml(pack.productLabel)}</span>
+                        <span class="cfg-rule-pack-meta">${pack.rules.length} rule${pack.rules.length === 1 ? '' : 's'}</span>
+                    </span>
+                    <label class="cfg-rule-pack-toggle" onclick="event.stopPropagation();">
+                        <input type="checkbox" ${productEnabled ? 'checked' : ''} onchange="onConfigProductToggle('${escapeForJs(pack.product)}', this.checked)">
+                        <span class="cfg-rule-pack-toggle-text">${productEnabled ? 'Enabled' : 'Disabled'}</span>
+                    </label>
+                </summary>
+                <ul class="cfg-rule-list">${ruleRows}</ul>
+            </details>
+        `;
+    }).join('');
+}
+
+function onConfigProductToggle(productId, enabled) {
+    if (!window.TrakaConfigRules) return;
+    window.TrakaConfigRules.setProductEnabled(productId, !!enabled);
+    renderConfigRulesAccordion();
+}
+
+function onConfigRuleToggle(ruleId, enabled) {
+    if (!window.TrakaConfigRules) return;
+    window.TrakaConfigRules.setRuleEnabled(ruleId, !!enabled);
+}
+
+/**
+ * Wire the master switch in the Config Rules modal so it stays in sync with
+ * the Home "Validate config files when loading" toggle.
+ */
+function initConfigRulesMasterToggle() {
+    const master = document.getElementById('configRulesMasterToggle');
+    if (!master) return;
+    master.addEventListener('change', () => {
+        persistValidateConfigsOnLoadPreference(master.checked);
+        rerunConfigRulesOnAllLoadedConfigs();
+    });
+}
+
 /**
  * Render a loaded .cfg / .ini / .config in the Config viewer (separate DOM from Log Viewer).
  */
@@ -2265,6 +2704,7 @@ function displayConfigFile(fileData) {
         const st = document.getElementById('configViewerStats');
         if (st) st.textContent = 'No file loaded';
         updateConfigHighlightResults();
+        updateConfigFindingsPanel(null);
         return;
     }
 
@@ -2293,6 +2733,7 @@ function displayConfigFile(fileData) {
     }
 
     updateConfigHighlightResults();
+    updateConfigFindingsPanel(fileData);
 }
 
 // ============================================
@@ -2481,6 +2922,18 @@ function renderConfigMultiView() {
         const lineCount = filteredLines.length;
         const shortLabel = getShortLabel(file);
         const originalFile = file.originalName || file.name;
+        // Config validation finding-count badge for this panel.
+        const findings = Array.isArray(file.configFindings) ? file.configFindings : [];
+        let findingsBadge = '';
+        if (findings.length && isValidateConfigsOnLoadEnabled()) {
+            const errs = findings.filter(f => f.severity === 'error').length;
+            const warns = findings.filter(f => f.severity === 'warning').length;
+            const infos = findings.filter(f => f.severity === 'info').length;
+            const sev = errs > 0 ? 'error' : warns > 0 ? 'warning' : 'info';
+            const label = `${findings.length} finding${findings.length === 1 ? '' : 's'}`;
+            const tooltip = `Config rule findings: ${errs} error · ${warns} warning · ${infos} info — click to open in single view`;
+            findingsBadge = `<button type="button" class="cfg-findings-badge cfg-${sev}" onclick="openConfigInSingleView(${index})" title="${escapeHtml(tooltip)}">${label}</button>`;
+        }
         return `
         <div class="compare-panel" data-index="${index}">
             <div class="compare-panel-header">
@@ -2493,6 +2946,7 @@ function renderConfigMultiView() {
                         <span class="panel-title-text">${escapeHtml(shortLabel)}</span>
                     </h4>
                     <div class="file-badge">${lineCount.toLocaleString()} lines &middot; ${formatFileSize(file.size)}</div>
+                    ${findingsBadge}
                 </div>
                 <div class="compare-panel-actions">
                     <button class="btn-icon panel-maximize-btn" onclick="toggleConfigMultiMaximize(${index})" title="Maximize this panel">
@@ -5301,72 +5755,84 @@ function updateIssuesUI() {
         critical: state.issues.filter(i => i.severity === 'critical').length,
         error: state.issues.filter(i => i.severity === 'error').length,
         warning: state.issues.filter(i => i.severity === 'warning').length,
-        performance: state.issues.filter(i => i.category === 'performance').length
+        performance: state.issues.filter(i => i.category === 'performance').length,
+        config: state.issues.filter(i => i.category === 'config').length
     };
-    
+
     const currentFile = state.files && state.currentFileIndex >= 0 ? state.files[state.currentFileIndex] : null;
-    
-    if (currentFile && currentFile.skipErrorRendering) {
+    // Config findings should always be shown — they're independent of log-issue scanning.
+    const skipLogIssues = !!(currentFile && currentFile.skipErrorRendering);
+
+    const setText = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+    };
+
+    if (skipLogIssues) {
         // Stitched (optional) or normal log loaded with "process issues" off — keep UI light
-        document.getElementById('countAll').textContent = '0';
-        document.getElementById('countCritical').textContent = '0';
-        document.getElementById('countError').textContent = '0';
-        document.getElementById('countWarning').textContent = '0';
-        document.getElementById('countPerformance').textContent = '0';
-        
-        document.getElementById('issuesBadge').textContent = '0';
-        document.getElementById('statIssues').textContent = '0';
+        // BUT still show config findings (they came from a separate source).
+        setText('countAll', counts.config);
+        setText('countCritical', '0');
+        setText('countError', '0');
+        setText('countWarning', '0');
+        setText('countPerformance', '0');
+        setText('countConfig', counts.config);
+
+        setText('issuesBadge', counts.config);
+        setText('statIssues', counts.config);
     } else {
-        // Normal behavior
-        document.getElementById('countAll').textContent = counts.all;
-        document.getElementById('countCritical').textContent = counts.critical;
-        document.getElementById('countError').textContent = counts.error;
-        document.getElementById('countWarning').textContent = counts.warning;
-        document.getElementById('countPerformance').textContent = counts.performance;
-        
-        // Update badges
-        document.getElementById('issuesBadge').textContent = counts.all;
-        document.getElementById('statIssues').textContent = counts.all;
+        setText('countAll', counts.all);
+        setText('countCritical', counts.critical);
+        setText('countError', counts.error);
+        setText('countWarning', counts.warning);
+        setText('countPerformance', counts.performance);
+        setText('countConfig', counts.config);
+
+        setText('issuesBadge', counts.all);
+        setText('statIssues', counts.all);
     }
-    
+
     renderIssues();
 }
 
 function renderIssues() {
     const container = document.getElementById('issuesList');
-    
+
     const currentFile = state.files[state.currentFileIndex];
-    if (currentFile && currentFile.skipErrorRendering) {
-        const detail = currentFile.isStitched
-            ? 'You turned off error highlighting for this stitched log.'
-            : 'This file was loaded with "Process issues on load" unchecked — no issues were scanned and log lines use plain styling for speed.';
-        container.innerHTML = `
-            <div class="empty-state">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                    <line x1="1" y1="1" x2="23" y2="23"></line>
-                </svg>
-                <p>Issue highlighting disabled</p>
-                <span>${detail}</span>
-            </div>
-        `;
-        
-        // Also zero out the numbers temporarily for this view
-        document.getElementById('countAll').textContent = '0';
-        document.getElementById('countCritical').textContent = '0';
-        document.getElementById('countError').textContent = '0';
-        document.getElementById('countWarning').textContent = '0';
-        document.getElementById('countPerformance').textContent = '0';
-        return;
+    const skipLogIssues = !!(currentFile && currentFile.skipErrorRendering);
+
+    // If log-issue rendering is suppressed but config findings exist, show
+    // them anyway — they were never affected by the "Process issues on load" toggle.
+    if (skipLogIssues) {
+        const configIssues = state.issues.filter(i => i.category === 'config');
+        if (!configIssues.length) {
+            const detail = currentFile.isStitched
+                ? 'You turned off error highlighting for this stitched log.'
+                : 'This file was loaded with "Process issues on load" unchecked — no issues were scanned and log lines use plain styling for speed.';
+            container.innerHTML = `
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                    </svg>
+                    <p>Issue highlighting disabled</p>
+                    <span>${detail}</span>
+                </div>
+            `;
+            return;
+        }
     }
-    
-    let filtered = state.issues;
+
+    let filtered = skipLogIssues
+        ? state.issues.filter(i => i.category === 'config')
+        : state.issues;
+
     if (state.activeCategory !== 'all') {
-        filtered = state.issues.filter(i => 
+        filtered = filtered.filter(i =>
             i.category === state.activeCategory || i.severity === state.activeCategory
         );
     }
-    
+
     if (filtered.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
@@ -5380,9 +5846,17 @@ function renderIssues() {
         `;
         return;
     }
-    
-    container.innerHTML = filtered.map(issue => `
-        <div class="issue-card ${issue.severity}" onclick="showIssueDetail('${issue.id}')">
+
+    container.innerHTML = filtered.map(issue => {
+        const isConfigIssue = issue.category === 'config';
+        const handler = isConfigIssue
+            ? `showConfigFindingDetail('${escapeForJs(issue.id)}')`
+            : `showIssueDetail('${escapeForJs(issue.id)}')`;
+        const badge = isConfigIssue
+            ? `<span class="issue-category-badge config-badge" title="Config validation finding">CONFIG</span>`
+            : '';
+        return `
+        <div class="issue-card ${issue.severity}${isConfigIssue ? ' config-issue' : ''}" onclick="${handler}">
             <div class="issue-header">
                 <div class="issue-title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -5392,7 +5866,10 @@ function renderIssues() {
                     </svg>
                     ${escapeHtml(issue.title)}
                 </div>
-                <span class="issue-severity ${issue.severity}">${issue.severity.toUpperCase()}</span>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    ${badge}
+                    <span class="issue-severity ${issue.severity}">${issue.severity.toUpperCase()}</span>
+                </div>
             </div>
             <div class="issue-description">${escapeHtml(issue.description)}</div>
             <div class="issue-meta">
@@ -5413,7 +5890,105 @@ function renderIssues() {
                 </span>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
+}
+
+/** Escape strings safely for use inside an inline JS string. */
+function escapeForJs(value) {
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"');
+}
+
+/**
+ * Open a config-finding detail dialog. Reuses the existing #issueModal but
+ * navigates "View in source" to the Config Viewer rather than the Log Viewer.
+ */
+function showConfigFindingDetail(issueId) {
+    const issue = state.issues.find(i => i.id === issueId);
+    if (!issue) return;
+    currentIssueId = issueId;
+
+    const modal = document.getElementById('issueModal');
+    const content = document.getElementById('issueModalContent');
+    if (!modal || !content) return;
+
+    const file = state.files.find(f => f.name === issue.file);
+    let contextLines = '';
+    if (file && Array.isArray(file.lines) && issue.line) {
+        const startLine = Math.max(0, issue.line - 6);
+        const endLine = Math.min(file.lines.length, issue.line + 5);
+        contextLines = file.lines.slice(startLine, endLine).map((line, idx) => {
+            const lineNum = startLine + idx + 1;
+            const isIssueLine = lineNum === issue.line;
+            return `<div class="log-line ${isIssueLine ? 'highlight' : ''}" data-line="${lineNum}">
+                <span style="color: var(--text-tertiary); margin-right: 1rem;">${lineNum}</span>${escapeHtml(line)}
+            </div>`;
+        }).join('');
+    }
+
+    const finding = issue.configFinding || {};
+    const productLabel = prettyProductLabel(finding.productId || (file && file.detectedConfigProduct));
+
+    content.innerHTML = `
+        <div style="margin-bottom: 1.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
+                <span class="issue-severity ${issue.severity}">${issue.severity.toUpperCase()}</span>
+                <span class="issue-category-badge config-badge">CONFIG</span>
+                <strong style="font-size: 1.125rem;">${escapeHtml(issue.title)}</strong>
+            </div>
+            <p style="color: var(--text-secondary);">${escapeHtml(issue.description)}</p>
+            ${finding.hint ? `<p style="color: var(--text-secondary); margin-top: 0.5rem;"><strong>Hint:</strong> ${escapeHtml(finding.hint)}</p>` : ''}
+        </div>
+        <div style="margin-bottom: 1.5rem;">
+            <h4 style="margin-bottom: 0.75rem; font-size: 0.9375rem;">Details</h4>
+            <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; font-size: 0.875rem;">
+                <span style="color: var(--text-tertiary);">File:</span>
+                <span>${escapeHtml(issue.file)}</span>
+                <span style="color: var(--text-tertiary);">Line:</span>
+                <span>${issue.line}</span>
+                <span style="color: var(--text-tertiary);">Product:</span>
+                <span>${escapeHtml(productLabel)}</span>
+                <span style="color: var(--text-tertiary);">Rule:</span>
+                <code style="font-family: var(--font-mono); font-size: 0.8125rem; color: var(--accent-primary);">${escapeHtml(issue.pattern)}</code>
+            </div>
+        </div>
+        <div>
+            <h4 style="margin-bottom: 0.75rem; font-size: 0.9375rem;">Context</h4>
+            <div style="background: var(--bg-primary); border-radius: var(--radius-md); padding: 0.75rem; font-family: var(--font-mono); font-size: 12px; line-height: 20px; overflow-x: auto;">
+                ${contextLines || '<em style="color: var(--text-tertiary);">Unable to load context</em>'}
+            </div>
+        </div>
+    `;
+
+    // Re-target the modal's primary "View in Log" button to the Config Viewer for this finding.
+    const actions = modal.querySelector('.modal-actions');
+    if (actions) {
+        const primary = actions.querySelector('.btn-primary');
+        if (primary) {
+            primary.textContent = 'View in Config';
+            primary.onclick = () => goToConfigFindingLine();
+        }
+    }
+
+    modal.classList.add('active');
+}
+
+function goToConfigFindingLine() {
+    const issue = state.issues.find(i => i.id === currentIssueId);
+    closeModal();
+    if (!issue) return;
+    const fileIndex = state.files.findIndex(f => f.name === issue.file);
+    if (fileIndex < 0) return;
+    state.currentConfigFileIndex = fileIndex;
+    const dropdown = document.getElementById('configFileSelect');
+    if (dropdown) dropdown.value = issue.file;
+    if (state.configViewMode === 'multi') setConfigViewMode('single');
+    displayConfigFile(state.files[fileIndex]);
+    navigateTo('config');
+    setTimeout(() => jumpToConfigFindingLine(issue.line || 1), 150);
 }
 
 let currentIssueId = null;
@@ -5421,12 +5996,27 @@ let currentIssueId = null;
 function showIssueDetail(issueId) {
     const issue = state.issues.find(i => i.id === issueId);
     if (!issue) return;
-    
+    // Config-category issues use the dedicated detail dialog (different "View in" target).
+    if (issue.category === 'config') {
+        showConfigFindingDetail(issueId);
+        return;
+    }
+
     currentIssueId = issueId;
-    
+
     const modal = document.getElementById('issueModal');
     const content = document.getElementById('issueModalContent');
-    
+
+    // Reset the action button (it may have been re-targeted by showConfigFindingDetail).
+    const actions = modal.querySelector('.modal-actions');
+    if (actions) {
+        const primary = actions.querySelector('.btn-primary');
+        if (primary) {
+            primary.textContent = 'View in Log';
+            primary.onclick = () => goToIssueLine();
+        }
+    }
+
     // Get context lines (5 before and after)
     const file = state.files.find(f => f.name === issue.file);
     let contextLines = '';
@@ -5513,10 +6103,22 @@ function exportIssues() {
         showToast('No issues to export', 'warning');
         return;
     }
-    
-    const report = state.issues.map(issue => 
-        `[${issue.severity.toUpperCase()}] ${issue.title}\nFile: ${issue.file}, Line: ${issue.line}\nDescription: ${issue.description}\nContent: ${issue.content}\n`
-    ).join('\n---\n\n');
+
+    const report = state.issues.map(issue => {
+        if (issue.category === 'config' && issue.configFinding) {
+            const f = issue.configFinding;
+            return `[${issue.severity.toUpperCase()} · CONFIG] ${issue.title}\n` +
+                   `File: ${issue.file}, Line: ${issue.line}\n` +
+                   `Rule: ${f.ruleId}\n` +
+                   `Product: ${prettyProductLabel(f.productId)}\n` +
+                   `Description: ${issue.description}\n` +
+                   (f.hint ? `Hint: ${f.hint}\n` : '');
+        }
+        return `[${issue.severity.toUpperCase()}] ${issue.title}\n` +
+               `File: ${issue.file}, Line: ${issue.line}\n` +
+               `Description: ${issue.description}\n` +
+               `Content: ${issue.content}\n`;
+    }).join('\n---\n\n');
     
     const header = `Traka Log Analyzer - Issue Report\nGenerated: ${new Date().toISOString()}\nTotal Issues: ${state.issues.length}\n\n${'='.repeat(50)}\n\n`;
     
@@ -5565,6 +6167,30 @@ function initSettings() {
             persistProcessIssuesOnLoadPreference();
         });
     }
+}
+
+/**
+ * Wire the "Validate config files when loading" Home toggle and the matching
+ * master toggle inside the Config Rules modal. Mirrors initSettings'
+ * processIssuesOnLoad hook.
+ */
+function initConfigValidationToggles() {
+    // Apply persisted setting to UI before binding listeners.
+    const stored = state.settings.validateConfigsOnLoad;
+    const initial = stored === undefined ? true : !!stored;
+    state.configRulesEnabled = initial;
+    syncValidateConfigsOnLoadCheckboxes(initial);
+
+    const homeEl = document.getElementById('validateConfigsOnLoad');
+    if (homeEl) {
+        homeEl.checked = initial;
+        homeEl.addEventListener('change', (e) => {
+            persistValidateConfigsOnLoadPreference(e.target.checked);
+            rerunConfigRulesOnAllLoadedConfigs();
+        });
+    }
+
+    initConfigRulesMasterToggle();
 }
 
 function loadSettings() {
@@ -9338,6 +9964,71 @@ function confirmClearAllLogs() {
 function closeClearLogsModal() {
     const modal = document.getElementById('clearLogsModal');
     modal.classList.remove('active');
+}
+
+/**
+ * Config Viewer "Clear configs" — removes only .cfg/.ini/.config files from
+ * the session. Log files and their issues are left alone. Used ONLY by the
+ * button on the Config Viewer page; the other Clear All buttons still call
+ * confirmClearAllLogs() and behave as before.
+ */
+function confirmClearConfigsOnly() {
+    const configCount = state.files.filter(f => f.isConfig).length;
+    if (configCount === 0) {
+        showToast('No config files loaded', 'info');
+        return;
+    }
+    document.getElementById('clearConfigsCount').textContent = configCount;
+    const modal = document.getElementById('clearConfigsModal');
+    if (modal) modal.classList.add('active');
+}
+
+function closeClearConfigsModal() {
+    const modal = document.getElementById('clearConfigsModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function clearConfigFilesOnly() {
+    const configFiles = state.files.filter(f => f.isConfig);
+    if (configFiles.length === 0) {
+        closeClearConfigsModal();
+        return;
+    }
+    const configNames = new Set(configFiles.map(f => f.name));
+
+    // Remove parsed/cached log entries for the configs.
+    configFiles.forEach(f => {
+        state.parsedLogs.delete(f.name);
+        state.lastReadPositions.delete(f.name);
+        if (state.liveTailFileHandles && state.liveTailFileHandles.delete) {
+            state.liveTailFileHandles.delete(f.name);
+        }
+    });
+
+    // Drop the config files but keep the log files so Log Viewer / Compare are untouched.
+    state.files = state.files.filter(f => !f.isConfig);
+
+    // Drop any issues whose source was a removed config — but keep log issues.
+    state.issues = state.issues.filter(i => !configNames.has(i.file));
+
+    // Reset config-viewer-only state.
+    state.currentConfigFileIndex = -1;
+    state.configMultiDiffSets = null;
+    state.configMultiDiffHighlightActive = false;
+
+    // Re-evaluate cross-file OnGuard rules in case dual-config etc changed.
+    rerunConfigRulesOnAllLoadedConfigs();
+
+    // Refresh UI.
+    updateUI();
+    updateFileDropdown();
+    updateConfigFileDropdown();
+    updateFilesList();
+    updateIssuesUI();
+    displayConfigFile(null);
+
+    closeClearConfigsModal();
+    showToast(`Removed ${configFiles.length} config file${configFiles.length === 1 ? '' : 's'} — log files kept`, 'success');
 }
 
 async function clearAllLogs() {
