@@ -3,15 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self'; img-src 'self' data:; connect-src 'self'">
     <title>Traka Log Analyzer - Desktop Edition</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('traka-ui-theme');
+                if (t !== 'light' && t !== 'dark') {
+                    t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        })();
+    </script>
+    <!-- Hub/Continuity font lock — Outfit is installed on some machines; never fall through to it -->
+    <style id="hub-font-lock">
+        html, body,
+        button, input, select, textarea, optgroup,
+        h1, h2, h3, h4, h5, h6,
+        .btn, .btn-icon, .nav-item, .nav-title,
+        .page-header h2, .hero-product-title, .hero-subtitle,
+        .stat-value, .stat-label, .card-title, .settings-card h3,
+        .form-label, label, .tutorial-card-title, .tutorial-detail-title,
+        .solutions-header h2 {
+            font-family: "Segoe UI", Tahoma, sans-serif !important;
+        }
+        code, kbd, pre, .mono, .log-content, .log-line, .form-mono {
+            font-family: Consolas, "Cascadia Mono", "Courier New", monospace !important;
+        }
+    </style>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
-    <link rel="stylesheet" href="css/styles.css">
-    <link rel="stylesheet" href="css/solution-styles.css">
+    <link id="flatpickrThemeDark" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css" disabled>
+    <link rel="stylesheet" href="css/styles.css?v=hub-segoe-3">
+    <link rel="stylesheet" href="css/solution-styles.css?v=hub-segoe-3">
     <link rel="icon" type="image/png" href="img/trakaweb-logo.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -101,12 +127,23 @@
                 </li>
             </ul>
             <div class="nav-footer">
-                <div class="log-stats">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                    </svg>
-                    <span id="loadedFilesCount">0 files loaded</span>
+                <div class="nav-footer-row">
+                    <div class="log-stats">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                        <span id="loadedFilesCount">0 files loaded</span>
+                    </div>
+                    <button type="button" class="theme-toggle-btn" id="themeToggleBtn" title="Toggle light/dark theme" aria-label="Toggle theme">
+                        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"></path>
+                        </svg>
+                        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+                        </svg>
+                    </button>
                 </div>
             </div>
             <button class="nav-collapse-btn" id="navCollapseBtn" onclick="toggleSidebarCollapse()" title="Collapse sidebar">
@@ -125,10 +162,10 @@
                 <div class="welcome-hero">
                     <div class="hero-content">
                         <div class="hero-branding" style="display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 1rem;">
-                            <img src="img/log-analyzer-icon.png" alt="Log Analyzer Icon" style="width: 104px; height: 104px; border-radius: 20px; mix-blend-mode: lighten;">
+                            <img src="img/log-analyzer-icon.png" alt="Log Analyzer Icon" class="hero-app-icon">
                             <div style="display: flex; flex-direction: column; justify-content: center; align-items: flex-start; line-height: 1;">
                                 <img src="img/traka-mark.svg" alt="Traka" style="height: 56px; width: auto; margin-bottom: 8px;">
-                                <span style="font-family: 'Syne', sans-serif; font-weight: 600; font-size: 24px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; margin-left: 2px;">
+                                <span class="hero-product-title">
                                     Log Analyzer
                                 </span>
                             </div>
@@ -1075,44 +1112,52 @@
                             <span class="tutorial-step-num">2</span>
                             Pages at a glance — click a tile for full detail
                         </h3>
-                        <p class="tutorial-grid-intro">Hover for a short summary; <strong>click</strong> to scroll to what you can do on that page (toolbar, main area, and extras).</p>
+                        <p class="tutorial-grid-intro">Hover for a short summary; <strong>click</strong> to open an annotated page guide (mini UI + callouts), then the full detail below.</p>
                         <div class="tutorial-grid">
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-home">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main"><div class="mp-bar accent"></div><div class="mp-bar" style="height:18px;border-style:dashed;border-width:1px;background:transparent;border-color:var(--line)"></div><div class="mp-bar" style="width:70%"></div></div></div>
                                 <h4>Home</h4>
                                 <p>Launchpad: load files, stats, optional auto‑discovery, and Clear All.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-viewer">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main"><div class="mp-bar accent"></div><div class="mp-bar"></div><div class="mp-bar" style="width:90%"></div><div class="mp-bar" style="width:75%"></div></div></div>
                                 <h4>Log Viewer</h4>
                                 <p>Single‑file view: search, filters, stitch, live tail, highlight rules, fullscreen.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-config">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main"><div class="mp-bar accent"></div><div class="mp-bar" style="width:55%"></div><div class="mp-bar" style="width:80%"></div></div></div>
                                 <h4>Config Viewer</h4>
                                 <p>Single vs multi‑panel configs, saved layout, config‑only highlight rules, optional Highlight Differences (multi‑view), Clear All.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-compare">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main" style="display:grid;grid-template-columns:1fr 1fr;gap:3px"><div class="mp-bar" style="height:28px"></div><div class="mp-bar" style="height:28px"></div></div></div>
                                 <h4>Compare</h4>
                                 <p>Multiple <strong>logs</strong>: layout, sync scroll, time sync, search, Highlight Differences (logs), pop‑out / minimize / maximize.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-issues">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main"><div class="mp-bar"></div><div class="mp-bar" style="width:85%"></div><div class="mp-bar" style="width:60%"></div></div></div>
                                 <h4>Issues</h4>
                                 <p>All detected problems; open one to jump to the line in Log Viewer.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-analytics">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main" style="flex-direction:row;align-items:flex-end;gap:2px;padding-top:8px"><div class="mp-bar accent" style="height:12px;width:8px;flex:1"></div><div class="mp-bar accent" style="height:22px;width:8px;flex:1"></div><div class="mp-bar accent" style="height:16px;width:8px;flex:1"></div><div class="mp-bar accent" style="height:28px;width:8px;flex:1"></div></div></div>
                                 <h4>Analytics</h4>
                                 <p>Charts for severity, timeline, top issues, and per‑file breakdown.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-faqs">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main"><div class="mp-bar accent" style="width:50%"></div><div class="mp-bar"></div><div class="mp-bar" style="width:70%"></div></div></div>
                                 <h4>FAQs</h4>
                                 <p>Knowledge base: search and category filters independent of your logs.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
                             </a>
                             <a class="tutorial-mini tutorial-mini-link" href="#tutorial-page-settings">
+                                <div class="tutorial-mini-preview" aria-hidden="true"><div class="mp-side"></div><div class="mp-main"><div class="mp-bar" style="width:40%"></div><div class="mp-bar accent" style="width:65%"></div><div class="mp-bar" style="width:55%"></div></div></div>
                                 <h4>Settings</h4>
                                 <p>Issue detection toggles, theme, font, word wrap, and related behaviour.</p>
                                 <span class="tutorial-mini-cta">Open guide →</span>
@@ -1126,6 +1171,43 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Home</h3>
                         <p class="tutorial-detail-lead">Your entry point for loading data and seeing session‑wide stats.</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated Home page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item active"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>Home</strong>
+                                            <span>Load files &amp; session overview</span>
+                                        </div>
+                                        <div class="guide-toolbar">
+                                            <span class="guide-chip danger">Clear All<span class="guide-n">3</span></span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-drop">Drop log or config files here<span class="guide-n">1</span></div>
+                                            <div class="guide-stats">
+                                                <div class="guide-stat"><span class="guide-n">2</span><b>12</b><span>Files</span></div>
+                                                <div class="guide-stat"><b>48k</b><span>Lines</span></div>
+                                                <div class="guide-stat"><b>7</b><span>Issues</span></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>Drop zone</strong> — drag in or click to browse; toggle issue scan on load in the footer.</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Stats cards</strong> — files, lines, and issues; some jump to Viewer or Issues.</span></div>
+                                <div class="guide-callout"><span class="guide-n">3</span><span><strong>Clear All</strong> — wipes the session after confirmation.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">What you can do</h4>
                         <ul class="tutorial-list">
                             <li><strong>Drop zone</strong> — Drag files in or click to open the file picker.</li>
@@ -1141,6 +1223,55 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Log Viewer</h3>
                         <p class="tutorial-detail-lead">Inspect one file at a time with rich filtering and tooling.</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated Log Viewer page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item active"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>Log Viewer</strong>
+                                            <span>traka-service.log</span>
+                                        </div>
+                                        <div class="guide-toolbar">
+                                            <span class="guide-chip">File ▾</span>
+                                            <span class="guide-chip">Live Tail</span>
+                                            <span class="guide-chip primary">Load File<span class="guide-n">1</span></span>
+                                            <span class="guide-chip">Stitch<span class="guide-n">2</span></span>
+                                            <span class="guide-chip">Rules</span>
+                                            <span class="guide-chip">Fullscreen</span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-filters">
+                                                <span class="guide-pill on">ERROR</span>
+                                                <span class="guide-pill on">WARN</span>
+                                                <span class="guide-pill">INFO</span>
+                                                <span class="guide-pill">DEBUG</span>
+                                                <span class="guide-n">3</span>
+                                            </div>
+                                            <div class="guide-log">
+                                                <div class="guide-log-row"><span class="guide-log-num">841</span><span class="guide-log-txt err">ERROR Auth timeout on lock 12</span></div>
+                                                <div class="guide-log-row"><span class="guide-log-num">842</span><span class="guide-log-txt">INFO Heartbeat OK</span></div>
+                                                <div class="guide-log-row"><span class="guide-log-num">843</span><span class="guide-log-txt warn">WARN Retry queued</span></div>
+                                                <div class="guide-log-row"><span class="guide-log-num">844</span><span class="guide-log-txt">DEBUG Poll cycle</span></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>Load File</strong> — add logs (configs also flow to Config Viewer).</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Stitch Files</strong> — merge rotated logs by timestamp into one view.</span></div>
+                                <div class="guide-callout"><span class="guide-n">3</span><span><strong>Filters</strong> — level chips, search, and date range narrow the log.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">Toolbar</h4>
                         <ul class="tutorial-list">
                             <li><strong>File dropdown</strong> — Switch the active log (or config entry if loaded that way).</li>
@@ -1172,6 +1303,51 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Config Viewer</h3>
                         <p class="tutorial-detail-lead">Dedicated place for <code>.cfg</code> / <code>.ini</code> style files: syntax-friendly view, config-only highlight rules, and optional multi-panel comparison — independent of Log Viewer and Compare.</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated Config Viewer page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item active"></div>
+                                        <div class="guide-side-item"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>Config Viewer</strong>
+                                            <span>Multi-view · Side by side</span>
+                                        </div>
+                                        <div class="guide-toolbar">
+                                            <span class="guide-chip">Multi-view<span class="guide-n">1</span></span>
+                                            <span class="guide-chip">Layout ▾</span>
+                                            <span class="guide-chip">Highlight Diff<span class="guide-n">2</span></span>
+                                            <span class="guide-chip primary">Load config</span>
+                                            <span class="guide-chip">Rules<span class="guide-n">3</span></span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-compare">
+                                                <div class="guide-panel">
+                                                    <div class="guide-panel-h">IntegrationEngine.cfg</div>
+                                                    <div class="guide-panel-b">[Service]<br>Port=8080<br>Timeout=30</div>
+                                                </div>
+                                                <div class="guide-panel">
+                                                    <div class="guide-panel-h">Monitor.cfg</div>
+                                                    <div class="guide-panel-b">[Service]<br>Port=8081<br>Timeout=60</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>View mode</strong> — Single file or Multi-view (choice is remembered).</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Highlight Differences</strong> — config-only diffs when two+ files are open.</span></div>
+                                <div class="guide-callout"><span class="guide-n">3</span><span><strong>Highlight / Config Rules</strong> — config-only patterns and product validation.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">Toolbar & actions</h4>
                         <ul class="tutorial-list">
                             <li><strong>View mode</strong> — Dropdown: <strong>Single file</strong> (one config at a time via the file dropdown) or <strong>Multi-view</strong> (every loaded config in its own panel, Compare-style). Your choice is remembered for next time.</li>
@@ -1197,6 +1373,51 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Compare</h3>
                         <p class="tutorial-detail-lead">Line up several <strong>log</strong> files with shared scrolling, search, and layout options. (Configs belong on <strong>Config Viewer</strong>, including multi-view and config-only Highlight Differences.)</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated Compare page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item active"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>Compare</strong>
+                                            <span>Side by side · 2 panels</span>
+                                        </div>
+                                        <div class="guide-toolbar">
+                                            <span class="guide-chip primary">Add Files</span>
+                                            <span class="guide-chip">Sync Scroll<span class="guide-n">1</span></span>
+                                            <span class="guide-chip">Time Sync<span class="guide-n">2</span></span>
+                                            <span class="guide-chip">Highlight Diff</span>
+                                            <span class="guide-chip">Layout ▾</span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-compare">
+                                                <div class="guide-panel">
+                                                    <div class="guide-panel-h">server-a.log <span class="guide-n">3</span></div>
+                                                    <div class="guide-panel-b">10:01:02 INFO start<br><span class="sync">10:01:05 ERROR lock</span><br>10:01:08 INFO retry</div>
+                                                </div>
+                                                <div class="guide-panel">
+                                                    <div class="guide-panel-h">server-b.log</div>
+                                                    <div class="guide-panel-b">10:01:02 INFO start<br><span class="sync">10:01:05 WARN wait</span><br>10:01:09 INFO ok</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>Sync Scroll</strong> — panels stay aligned as you scroll.</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Time Sync</strong> — lock scroll to matching timestamps across files.</span></div>
+                                <div class="guide-callout"><span class="guide-n">3</span><span><strong>Panel controls</strong> — pop out, minimize, maximize, or remove a file.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">Toolbar</h4>
                         <ul class="tutorial-list">
                             <li><strong>Add Files</strong> — Load multiple logs into compare panels.</li>
@@ -1228,6 +1449,42 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Issues</h3>
                         <p class="tutorial-detail-lead">Every detected issue from loaded logs, in one sortable list.</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated Issues page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item active"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>Issues</strong>
+                                            <span>7 findings</span>
+                                        </div>
+                                        <div class="guide-toolbar">
+                                            <span class="guide-chip">All severities<span class="guide-n">1</span></span>
+                                            <span class="guide-chip">All categories</span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-issues">
+                                                <div class="guide-issue"><span class="guide-sev crit"></span> Auth timeout — lock 12<span class="guide-n">2</span></div>
+                                                <div class="guide-issue"><span class="guide-sev warn"></span> DB connection retry</div>
+                                                <div class="guide-issue"><span class="guide-sev warn"></span> Config validation: Port</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>Filters</strong> — narrow by severity and category.</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Open an issue</strong> — jump to the exact line in Log Viewer.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">What you can do</h4>
                         <ul class="tutorial-list">
                             <li><strong>Filter by severity / category</strong> — Narrow the list with the same concepts as the viewer chips.</li>
@@ -1240,6 +1497,47 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Analytics</h3>
                         <p class="tutorial-detail-lead">Visual summaries after issues have been computed for your logs.</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated Analytics page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item active"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>Analytics</strong>
+                                            <span>Severity · Timeline · By file</span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-charts">
+                                                <div class="guide-chart" style="align-items:center;justify-content:center">
+                                                    <div class="guide-donut" title="Severity"></div>
+                                                    <span class="guide-n" style="position:absolute;top:8px;left:8px">1</span>
+                                                </div>
+                                                <div class="guide-chart" style="position:relative">
+                                                    <div class="guide-bar" style="height:35%"></div>
+                                                    <div class="guide-bar" style="height:60%"></div>
+                                                    <div class="guide-bar" style="height:45%"></div>
+                                                    <div class="guide-bar" style="height:80%"></div>
+                                                    <div class="guide-bar" style="height:55%"></div>
+                                                    <span class="guide-n" style="position:absolute;top:4px;right:4px">2</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>Severity chart</strong> — critical / high / medium / low mix.</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Timeline &amp; breakdowns</strong> — when issues cluster and which files dominate.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">What you can do</h4>
                         <ul class="tutorial-list">
                             <li><strong>Severity chart</strong> — Distribution of critical / high / medium / low style findings.</li>
@@ -1254,6 +1552,44 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">FAQs & knowledge base</h3>
                         <p class="tutorial-detail-lead">Curated Traka issues and fixes — useful even when your current logs do not contain a given error.</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated FAQs page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item active"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>FAQs &amp; Knowledge Base</strong>
+                                            <span>Independent of loaded logs</span>
+                                        </div>
+                                        <div class="guide-toolbar">
+                                            <span class="guide-chip primary" style="min-width:9rem">Search…<span class="guide-n">1</span></span>
+                                            <span class="guide-chip">All</span>
+                                            <span class="guide-chip">Config<span class="guide-n">2</span></span>
+                                            <span class="guide-chip">Security</span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-issues">
+                                                <div class="guide-issue">Lock service won’t start — check port</div>
+                                                <div class="guide-issue">Database timeout after upgrade</div>
+                                                <div class="guide-issue">Auth certificate mismatch</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>Search</strong> — filter articles by keyword.</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Categories</strong> — configuration, security, database, and more.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">What you can do</h4>
                         <ul class="tutorial-list">
                             <li><strong>Search</strong> — Filter articles by keyword.</li>
@@ -1266,6 +1602,49 @@
                         <a class="tutorial-back-link" href="#tutorial-pages">← Back to page list</a>
                         <h3 class="tutorial-detail-title">Settings</h3>
                         <p class="tutorial-detail-lead">Control how aggressively the tool analyses logs and how content looks.</p>
+
+                        <figure class="guide-annotate" aria-label="Annotated Settings page">
+                            <div class="guide-frame">
+                                <div class="guide-chrome">
+                                    <div class="guide-side" aria-hidden="true">
+                                        <div class="guide-side-logo"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item"></div>
+                                        <div class="guide-side-item active"></div>
+                                    </div>
+                                    <div class="guide-main">
+                                        <div class="guide-titlebar">
+                                            <strong>Settings</strong>
+                                            <span>Detection · Appearance</span>
+                                        </div>
+                                        <div class="guide-body">
+                                            <div class="guide-settings">
+                                                <div class="guide-set-card">
+                                                    <span class="guide-n">1</span>
+                                                    <b>Issue detection</b>
+                                                    <div class="guide-toggle"></div>
+                                                    <div class="guide-toggle"></div>
+                                                    <div class="guide-toggle"></div>
+                                                </div>
+                                                <div class="guide-set-card">
+                                                    <span class="guide-n">2</span>
+                                                    <b>Appearance</b>
+                                                    <div class="guide-toggle"></div>
+                                                    <div class="guide-toggle"></div>
+                                                    <div class="guide-toggle"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <figcaption class="guide-callouts">
+                                <div class="guide-callout"><span class="guide-n">1</span><span><strong>Detection toggles</strong> — turn issue classes on or off.</span></div>
+                                <div class="guide-callout"><span class="guide-n">2</span><span><strong>Appearance</strong> — theme, font, line numbers, word wrap.</span></div>
+                            </figcaption>
+                        </figure>
+
                         <h4 class="tutorial-detail-sub">What you can do</h4>
                         <ul class="tutorial-list">
                             <li><strong>Detection toggles</strong> — Turn issue classes (errors, timeouts, auth, DB, etc.) on or off.</li>
@@ -1363,6 +1742,13 @@
                     
                     <div class="settings-card">
                         <h3>Display Options</h3>
+                        <div class="form-group">
+                            <label for="themeSelect">Theme</label>
+                            <select id="themeSelect" class="form-select">
+                                <option value="light">Light</option>
+                                <option value="dark">Dark</option>
+                            </select>
+                        </div>
                         <div class="form-group">
                             <label for="fontSizeSelect">Log Font Size</label>
                             <select id="fontSizeSelect" class="form-select">
@@ -1747,14 +2133,14 @@
                                 <label style="display: block; margin-bottom: 0.25rem; font-size: 0.875rem; color: var(--text-secondary);">Text Color</label>
                                 <div style="display: flex; align-items: center; gap: 0.5rem;">
                                     <input type="color" id="newRuleTextColor" value="#00ff00" style="width: 60px; height: 38px; padding: 2px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
-                                    <input type="text" id="newRuleTextColorHex" value="#00ff00" placeholder="#00ff00" style="flex: 1; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">
+                                    <input type="text" id="newRuleTextColorHex" value="#00ff00" placeholder="#00ff00" style="flex: 1; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.875rem;">
                                 </div>
                             </div>
                             <div>
                                 <label style="display: block; margin-bottom: 0.25rem; font-size: 0.875rem; color: var(--text-secondary);">Background Color</label>
                                 <div style="display: flex; align-items: center; gap: 0.5rem;">
                                     <input type="color" id="newRuleBgColor" value="#003300" style="width: 60px; height: 38px; padding: 2px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
-                                    <input type="text" id="newRuleBgColorHex" value="#003300" placeholder="#003300" style="flex: 1; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">
+                                    <input type="text" id="newRuleBgColorHex" value="#003300" placeholder="#003300" style="flex: 1; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.875rem;">
                                 </div>
                             </div>
                         </div>
@@ -1768,7 +2154,7 @@
                         <div>
                             <div style="padding: 1rem; background: var(--bg-secondary); border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
                                 <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">Preview:</label>
-                                <div id="highlightPreview" style="font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;">
+                                <div id="highlightPreview" style="font-family: var(--font-mono); font-size: 0.875rem;">
                                     This is a <span id="highlightPreviewSample" style="color: #00ff00; background-color: #003300; padding: 2px 4px; border-radius: 2px;">highlighted</span> text example
                                 </div>
                             </div>

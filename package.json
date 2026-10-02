@@ -1,6 +1,6 @@
 {
   "name": "traka-log-analyzer",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Traka Log Analyzer - Desktop Edition with automatic log file discovery",
   "main": "main.js",
   "author": {
@@ -15,7 +15,7 @@
     "build:win": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^33.4.11",
     "electron-builder": "^25.1.8"
   },
   "dependencies": {
@@ -56,6 +56,8 @@
       "main.js",
       "preload.js",
       "index.html",
+      "popout.html",
+      "popout.js",
       "css/**/*",
       "js/**/*",
       "img/**/*",

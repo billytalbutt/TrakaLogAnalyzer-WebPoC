@@ -49,7 +49,7 @@ function createWindow() {
             sandbox: false
         },
         show: false, // Don't show until ready
-        backgroundColor: '#0a0e1a'
+        backgroundColor: '#f4f5f7'
     });
 
     // Load the index.html
@@ -87,7 +87,7 @@ function createInstallerWindow() {
         resizable: false,
         frame: false,
         icon: path.join(__dirname, 'img/trakaweb-logo.png'),
-        backgroundColor: '#0d0f12',
+        backgroundColor: '#f4f5f7',
         webPreferences: {
             preload: path.join(__dirname, 'installer-preload.js'),
             contextIsolation: true,
@@ -1154,7 +1154,7 @@ ipcMain.handle('open-popout', async (event, panelIndex, fileData, stateData) => 
             minWidth: 400,
             minHeight: 300,
             icon: path.join(__dirname, 'img/trakaweb-logo.png'),
-            backgroundColor: '#0a0e1a',
+            backgroundColor: '#f4f5f7',
             webPreferences: {
                 preload: path.join(__dirname, 'preload.js'),
                 contextIsolation: true,

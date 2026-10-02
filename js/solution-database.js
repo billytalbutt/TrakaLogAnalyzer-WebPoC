@@ -1488,6 +1488,123 @@ const solutionDatabase = {
                 'License file (if prompted)'
             ],
             relatedIssues: []
+        },
+        {
+            id: 'ACCESS_PATH_DENIED',
+            pattern: /Access to the path .* is denied|UnauthorizedAccessException|access.*denied.*path/i,
+            severity: 'HIGH',
+            title: 'File/Folder Access Denied',
+            category: 'Permissions',
+            estimatedTime: '5-15 minutes',
+            why: 'The Traka service account cannot read or write a required path (logs, config, exports, or certificate store).',
+            steps: [
+                { number: 1, title: 'Identify the path', description: 'Copy the exact path from the log line.', command: null },
+                { number: 2, title: 'Check service account', description: 'In services.msc, open the Traka service → Log On tab and note the account.', command: 'services.msc' },
+                { number: 3, title: 'Grant NTFS permissions', description: 'Give that account Modify on the folder (and Read on parent folders if needed).', command: null },
+                { number: 4, title: 'Restart the service', description: 'Restart the affected Traka service and confirm the error stops.', command: null }
+            ],
+            prerequisites: ['Admin rights on the server', 'Knowledge of the service logon account'],
+            relatedIssues: ['SERVICE_NOT_RUNNING']
+        },
+        {
+            id: 'FILE_IN_USE',
+            pattern: /being used by another process|The process cannot access the file|IOException.*sharing/i,
+            severity: 'MEDIUM',
+            title: 'Log/Config File Locked',
+            category: 'File System',
+            estimatedTime: '5-10 minutes',
+            why: 'Another process (editor, AV scanner, backup, or a second Traka instance) has the file open exclusively.',
+            steps: [
+                { number: 1, title: 'Close editors', description: 'Close Notepad/VS Code if you have the log or config open.', command: null },
+                { number: 2, title: 'Check for duplicate services', description: 'Ensure only one instance of the Traka service is running.', command: 'services.msc' },
+                { number: 3, title: 'Retry after a pause', description: 'Wait a few seconds and retry the operation; rotation often releases the lock.', command: null }
+            ],
+            prerequisites: [],
+            relatedIssues: ['ACCESS_PATH_DENIED']
+        },
+        {
+            id: 'ASSEMBLY_LOAD_FAIL',
+            pattern: /Could not load file or assembly|FileNotFoundException.*dll|System\.IO\.FileNotFoundException/i,
+            severity: 'CRITICAL',
+            title: 'Missing .NET Assembly / DLL',
+            category: 'Installation',
+            estimatedTime: '15-30 minutes',
+            why: 'A required DLL is missing, blocked, or the wrong version after a partial install/upgrade.',
+            steps: [
+                { number: 1, title: 'Note the assembly name', description: 'Copy the assembly name and version from the exception.', command: null },
+                { number: 2, title: 'Repair/reinstall component', description: 'Re-run the Traka installer for that engine/integration and choose Repair.', command: null },
+                { number: 3, title: 'Unblock downloaded files', description: 'If DLLs were copied manually, unblock them (Properties → Unblock) or use Unblock-File.', command: null },
+                { number: 4, title: 'Restart service / IIS', description: 'Restart the service or recycle the TrakaWEB app pool.', command: null }
+            ],
+            prerequisites: ['Installer media', 'Admin rights'],
+            relatedIssues: ['SERVICE_NOT_INSTALLED']
+        },
+        {
+            id: 'TLS_HANDSHAKE_FAIL',
+            pattern: /SSL.*handshake|TLS.*handshake|Could not establish trust relationship|The remote certificate is invalid|SecureChannelFailure/i,
+            severity: 'HIGH',
+            title: 'TLS/SSL Handshake or Trust Failure',
+            category: 'Certificates',
+            estimatedTime: '15-30 minutes',
+            why: 'HTTPS between Traka components (or to SQL/AD/IdP) failed because of certificate trust, hostname mismatch, or disabled TLS protocols.',
+            steps: [
+                { number: 1, title: 'Confirm the endpoint URL', description: 'Check the URL/host in config matches the certificate CN/SAN.', command: null },
+                { number: 2, title: 'Check certificate chain', description: 'Ensure the server and intermediate CAs are trusted on this machine.', command: 'certmgr.msc' },
+                { number: 3, title: 'Align TLS versions', description: 'Confirm OS/.NET Schannel allows the TLS version required by the remote host.', command: null },
+                { number: 4, title: 'Retry connection', description: 'Restart the service and re-test the failing call.', command: null }
+            ],
+            prerequisites: ['Certificate access', 'Admin rights'],
+            relatedIssues: ['CERT_NO_PRIVATE_KEY', 'CERT_NOT_LOADED', 'IE_SSL_NOT_CONFIGURED']
+        },
+        {
+            id: 'SQL_DEADLOCK',
+            pattern: /deadlock victim|Transaction \(Process ID \d+\) was deadlocked|1205/i,
+            severity: 'MEDIUM',
+            title: 'SQL Deadlock',
+            category: 'Database',
+            estimatedTime: '10-20 minutes',
+            why: 'Two SQL sessions blocked each other; SQL Server killed one as the deadlock victim. Often transient under load.',
+            steps: [
+                { number: 1, title: 'Confirm frequency', description: 'If rare, retry is enough. If frequent, note the time window from the logs.', command: null },
+                { number: 2, title: 'Check concurrent jobs', description: 'Look for overlapping bulk imports, reports, or integration bursts.', command: null },
+                { number: 3, title: 'Review SQL indexes/blocking', description: 'Ask a DBA to review blocking and missing indexes for the objects in the deadlock graph.', command: null }
+            ],
+            prerequisites: ['SQL access or DBA support'],
+            relatedIssues: ['DB_CONNECTION_FAILED']
+        },
+        {
+            id: 'AD_LDAP_BIND_FAIL',
+            pattern: /LDAP.*fail|Active Directory.*fail|DirectoryServicesCOMException|invalid credentials.*LDAP|bind.*failed/i,
+            severity: 'HIGH',
+            title: 'Active Directory / LDAP Bind Failed',
+            category: 'Authentication',
+            estimatedTime: '10-20 minutes',
+            why: 'Traka could not bind to AD/LDAP — wrong bind DN/password, locked account, or unreachable DC.',
+            steps: [
+                { number: 1, title: 'Verify bind account', description: 'Confirm the service account password and that it is not locked/expired.', command: null },
+                { number: 2, title: 'Check DC connectivity', description: 'From the Traka server, ping/resolve the configured domain controller / LDAP host.', command: null },
+                { number: 3, title: 'Update integration config', description: 'Correct LDAP path, port (389/636), and SSL settings in the AD integration config.', command: null },
+                { number: 4, title: 'Restart integration', description: 'Restart the Integration Engine / AD package and re-test a sync.', command: null }
+            ],
+            prerequisites: ['AD admin contact', 'Integration config access'],
+            relatedIssues: ['IE_CREDENTIALS_MISSING', 'INVALID_CREDENTIALS']
+        },
+        {
+            id: 'HTTP_5XX_TRAKAWEB',
+            pattern: /HTTP\s*50[023]|503 Service Unavailable|500 Internal Server Error|App pool.*stopped|Application pool/i,
+            severity: 'HIGH',
+            title: 'TrakaWEB HTTP 5xx / App Pool Issue',
+            category: 'TrakaWEB',
+            estimatedTime: '10-20 minutes',
+            why: 'IIS/TrakaWEB returned a server error or the app pool is stopped/recycling.',
+            steps: [
+                { number: 1, title: 'Check IIS app pool', description: 'In IIS Manager, ensure the TrakaWEB app pool is Started.', command: 'inetmgr' },
+                { number: 2, title: 'Review Windows Event Log', description: 'Check Application log for ASP.NET / IIS errors around the same timestamp.', command: 'eventvwr.msc' },
+                { number: 3, title: 'Recycle and retest', description: 'Recycle the app pool, browse TrakaWEB, and confirm the 5xx clears.', command: null },
+                { number: 4, title: 'Check disk/SQL', description: 'If it returns, verify disk space and SQL connectivity from the web server.', command: null }
+            ],
+            prerequisites: ['IIS admin rights'],
+            relatedIssues: ['DB_CONNECTION_FAILED', 'SERVICE_NOT_RUNNING']
         }
     ]
 };

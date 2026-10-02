@@ -10,6 +10,51 @@
 // Check if running in Electron environment
 const isElectron = window.electronAPI && window.electronAPI.isElectron;
 
+// ============================================
+// Theme (Hub / Continuity parity)
+// ============================================
+function getPreferredTheme() {
+    try {
+        const saved = localStorage.getItem('traka-ui-theme');
+        if (saved === 'light' || saved === 'dark') return saved;
+    } catch (e) { /* ignore */ }
+    try {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch (e) {
+        return 'light';
+    }
+}
+
+function syncFlatpickrTheme(theme) {
+    const darkLink = document.getElementById('flatpickrThemeDark');
+    if (darkLink) darkLink.disabled = theme !== 'dark';
+}
+
+function applyTheme(theme) {
+    const t = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem('traka-ui-theme', t); } catch (e) { /* ignore */ }
+    syncFlatpickrTheme(t);
+    const select = document.getElementById('themeSelect');
+    if (select) select.value = t;
+}
+
+function toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    applyTheme(cur === 'dark' ? 'light' : 'dark');
+}
+
+function initThemeUI() {
+    applyTheme(getPreferredTheme());
+    const btn = document.getElementById('themeToggleBtn');
+    if (btn) btn.addEventListener('click', toggleTheme);
+    const select = document.getElementById('themeSelect');
+    if (select) {
+        select.value = document.documentElement.getAttribute('data-theme') || 'light';
+        select.addEventListener('change', (e) => applyTheme(e.target.value));
+    }
+}
+
 // Electron-specific state
 const electronState = {
     watchedDirectories: new Map(),
@@ -145,14 +190,15 @@ function handleSyncEvent(type, data) {
                 
                 state.compareVirtualScroll.forEach((vs, index) => {
                     if (index !== sourceIndex && state.timeSyncOffsets[index] !== undefined && vs) {
-                        vs.panelContent.scrollTop = state.timeSyncOffsets[index] + delta;
+                        const target = state.timeSyncOffsets[index] + delta;
+                        if (Math.abs(vs.panelContent.scrollTop - target) > 0.5) {
+                            vs.panelContent.scrollTop = target;
+                        }
                     }
                 });
                 
-                setTimeout(() => { 
-                    state.timeSyncScrolling = false; 
-                    if (typeof isSyncingScroll !== 'undefined') isSyncingScroll = false;
-                }, 50);
+                state.timeSyncScrolling = false;
+                if (typeof isSyncingScroll !== 'undefined') isSyncingScroll = false;
             }
         }
     }
@@ -906,6 +952,7 @@ const state = {
     stitchMode: false,
     stitchedFiles: [], // Files selected for stitching
     stitchedData: null, // Merged log data
+    lastStitchBreakJumpIndex: null, // Cursor for next/prev stitch-break navigation
     dateSortOrder: 'none', // Date sorting: 'none', 'asc', 'desc'
     highlightRules: [], // Custom text highlighting rules (BareTail-style) — log viewer & compare
     /** Separate rules for the Config file page only (not shared with logs) */
@@ -1091,7 +1138,16 @@ const issuePatterns = [
     { pattern: /web\s*service\s*(error|unavailable)/i, severity: 'error', category: 'error', title: 'Web Service Error', description: 'Web service unavailable' },
     { pattern: /booking\s*(failed|error|conflict)/i, severity: 'warning', category: 'warning', title: 'Booking Issue', description: 'Booking-related problem' },
     { pattern: /user\s*(not\s*found|invalid|locked)/i, severity: 'warning', category: 'warning', title: 'User Issue', description: 'User account problem' },
-    { pattern: /session\s*(expired|timeout|invalid)/i, severity: 'warning', category: 'warning', title: 'Session Issue', description: 'User session problem' }
+    { pattern: /session\s*(expired|timeout|invalid)/i, severity: 'warning', category: 'warning', title: 'Session Issue', description: 'User session problem' },
+
+    // Additional actionable Traka/ops patterns (paired with solution-database entries)
+    { pattern: /Access to the path .* is denied|UnauthorizedAccessException/i, severity: 'error', category: 'error', title: 'Path Access Denied', description: 'Service cannot access a file or folder' },
+    { pattern: /Could not load file or assembly|FileNotFoundException/i, severity: 'critical', category: 'critical', title: 'Missing Assembly', description: 'Required DLL/assembly failed to load' },
+    { pattern: /SSL.*handshake|Could not establish trust relationship|The remote certificate is invalid/i, severity: 'error', category: 'error', title: 'TLS/Certificate Trust', description: 'HTTPS/TLS trust or handshake failure' },
+    { pattern: /deadlock victim|was deadlocked on lock/i, severity: 'error', category: 'performance', title: 'SQL Deadlock', description: 'SQL Server deadlock victim' },
+    { pattern: /being used by another process|cannot access the file/i, severity: 'warning', category: 'warning', title: 'File In Use', description: 'File locked by another process' },
+    { pattern: /HTTP\s*50[023]|503 Service Unavailable|500 Internal Server Error/i, severity: 'error', category: 'error', title: 'HTTP 5xx', description: 'Web server / TrakaWEB error response' },
+    { pattern: /LDAP.*fail|DirectoryServicesCOMException|unable to bind/i, severity: 'error', category: 'error', title: 'AD/LDAP Bind Failed', description: 'Active Directory bind or LDAP failure' }
 ];
 
 // ============================================
@@ -1101,6 +1157,9 @@ function initializeApp() {
     console.log('🚀 Starting app initialization...');
     
     try {
+        console.log('  ✓ Initializing theme...');
+        initThemeUI();
+
         console.log('  ✓ Initializing navigation...');
         initNavigation();
         
@@ -1617,6 +1676,284 @@ function formatArchiveDate(dateStr) {
     
     // Fallback: return as-is (could be just an index like "1" or "2")
     return dateStr;
+}
+
+/** Format a log event timestamp for stitch UI labels */
+function formatLogDateTime(ms) {
+    if (ms == null || isNaN(ms)) return '';
+    const d = new Date(ms);
+    return d.toLocaleString(undefined, {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+}
+
+/** True when this is the live/current log (no rotation/date archive suffix) */
+function isCurrentLogArchive(file) {
+    const original = (file.originalName || file.name || '').toLowerCase();
+    if (/\.(?:txt|log|cfg)\.\d+/i.test(original)) return false;
+    if (/[_\-]\d{8}\.(?:txt|log|cfg)$/i.test(original)) return false;
+    if (/[_\-]\d{4}-\d{2}-\d{2}\.(?:txt|log|cfg)$/i.test(original)) return false;
+    return true;
+}
+
+/**
+ * First and last event timestamps inside a log file (from parsed entries or raw lines).
+ * Used to order rotated archives into one continuous stream.
+ */
+function getFileLogTimeBounds(file) {
+    if (!file) return null;
+
+    const readTimeFromEntry = (entry) => {
+        if (!entry || entry.isSeparator) return null;
+        if (entry.cachedTime && entry.cachedTime > 0) return entry.cachedTime;
+        if (entry.sortableTimestamp && entry.sortableTimestamp > 0) return entry.sortableTimestamp;
+        if (entry.timestamp) {
+            const t = typeof parseTimestamp === 'function' ? parseTimestamp(entry.timestamp) : Date.parse(entry.timestamp);
+            if (t && !isNaN(t) && t > 0) return t;
+        }
+        const raw = entry.raw || (typeof entry === 'string' ? entry : '');
+        if (raw) {
+            const ts = extractTimestamp(raw);
+            if (ts) {
+                const t = parseTimestamp(ts);
+                if (t && !isNaN(t) && t > 0) return t;
+            }
+        }
+        return null;
+    };
+
+    let first = null;
+    let last = null;
+
+    const parsed = state.parsedLogs.get(file.name);
+    if (parsed && parsed.length) {
+        for (const entry of parsed) {
+            const t = readTimeFromEntry(entry);
+            if (t != null) {
+                if (first === null) first = t;
+                last = t;
+            }
+        }
+    } else if (file.lines && file.lines.length) {
+        // Lightweight scan of raw lines when parse cache is missing
+        const scanLimit = Math.min(file.lines.length, 5000);
+        for (let i = 0; i < scanLimit; i++) {
+            const ts = extractTimestamp(file.lines[i]);
+            if (!ts) continue;
+            const t = parseTimestamp(ts);
+            if (t && !isNaN(t) && t > 0) {
+                if (first === null) first = t;
+                break;
+            }
+        }
+        for (let i = file.lines.length - 1; i >= Math.max(0, file.lines.length - scanLimit); i--) {
+            const ts = extractTimestamp(file.lines[i]);
+            if (!ts) continue;
+            const t = parseTimestamp(ts);
+            if (t && !isNaN(t) && t > 0) {
+                last = t;
+                break;
+            }
+        }
+    }
+
+    if (first == null || last == null) return null;
+    return { first, last };
+}
+
+/** Group key so Business Engine Debugging_Log.txt + .txt.20240319 stay one stream */
+function getStitchFamilyKey(file) {
+    const eng = file.engineType || detectEngineType(file.originalName || file.name) || 'Log';
+    let base = (file.originalName || file.name || '').toLowerCase();
+    base = base.replace(/^(business engine|comms engine|integration engine|trakaweb)\s*-\s*/i, '');
+    // Strip rotation / dated suffixes: .txt.1, .log.20240319
+    base = base.replace(/\.(?:txt|log|cfg)\.(\d{8}|\d{4}-\d{2}-\d{2}|\d+)$/i, '');
+    // Strip inline dates: Debugging_Log_20260110.txt
+    base = base.replace(/[_\-\s](\d{8}|\d{4}-\d{2}-\d{2})(?=\.(?:txt|log|cfg)$)/i, '');
+    base = base.replace(/\.(?:txt|log|cfg)$/i, '');
+    return `${eng}::${base}`;
+}
+
+/**
+ * Stitch list label: engine name + current/archive + real first→last event times from content.
+ */
+function getStitchListLabel(file) {
+    const engine =
+        file.engineType ||
+        detectEngineType(file.originalName || file.name) ||
+        'Log';
+    const bounds = getFileLogTimeBounds(file);
+    const current = isCurrentLogArchive(file);
+    const role = current ? 'current' : 'archive';
+
+    if (bounds) {
+        return `${engine} · ${role} · ${formatLogDateTime(bounds.first)} → ${formatLogDateTime(bounds.last)}`;
+    }
+
+    // Fallback to filename date when content times are unavailable
+    const short = getShortLabel(file);
+    return current ? `${short} · current` : short;
+}
+
+/**
+ * Order rotated parts of the same log oldest → newest (current file last).
+ * Prefers first-event timestamps from file content; falls back to filename heuristics.
+ */
+function sortFilesForStitch(files) {
+    return [...files].sort((a, b) => {
+        const famA = getStitchFamilyKey(a);
+        const famB = getStitchFamilyKey(b);
+        if (famA !== famB) return famA.localeCompare(famB, undefined, { sensitivity: 'base' });
+
+        const boundsA = getFileLogTimeBounds(a);
+        const boundsB = getFileLogTimeBounds(b);
+        if (boundsA && boundsB) {
+            if (boundsA.first !== boundsB.first) return boundsA.first - boundsB.first;
+            return boundsA.last - boundsB.last;
+        }
+
+        // Filename fallback: archives before current; older archive dates first
+        const curA = isCurrentLogArchive(a);
+        const curB = isCurrentLogArchive(b);
+        if (curA !== curB) return curA ? 1 : -1;
+
+        const originalA = (a.originalName || a.name || '').toLowerCase();
+        const originalB = (b.originalName || b.name || '').toLowerCase();
+        const extract = (name) => {
+            let m = name.match(/(\d{8})/);
+            if (m) return parseInt(m[1], 10);
+            m = name.match(/(\d{4})-(\d{2})-(\d{2})/);
+            if (m) return parseInt(m[1] + m[2] + m[3], 10);
+            m = name.match(/\.(?:txt|log)\.(\d+)$/i);
+            if (m) return -parseInt(m[1], 10); // .2 older than .1 → lower sort key first when negated? 
+            // Higher rotation index is older: want .3 before .1 → sort by index descending for age...
+            // Using negative so larger index sorts first when we ascending-sort extract values:
+            // .3 → -3, .1 → -1; -3 < -1 so .3 first. Good.
+            return 0;
+        };
+        const dA = extract(originalA);
+        const dB = extract(originalB);
+        if (dA !== dB) return dA - dB;
+
+        const modA = a.lastModified ? new Date(a.lastModified).getTime() : 0;
+        const modB = b.lastModified ? new Date(b.lastModified).getTime() : 0;
+        return modA - modB;
+    });
+}
+
+/**
+ * Re-order selected stitch files by content time within each log family.
+ * Keeps family groups in the order they first appear in the selection list.
+ */
+function refineStitchOrderByContent(fileNames) {
+    const files = fileNames.map(n => state.files.find(f => f.name === n)).filter(Boolean);
+    if (files.length < 2) return fileNames;
+
+    const familyOrder = [];
+    const families = new Map();
+    for (const f of files) {
+        const key = getStitchFamilyKey(f);
+        if (!families.has(key)) {
+            families.set(key, []);
+            familyOrder.push(key);
+        }
+        families.get(key).push(f);
+    }
+
+    const direction = document.getElementById('stitchDirection')?.value || 'asc';
+    const result = [];
+    for (const key of familyOrder) {
+        const group = sortFilesForStitch(families.get(key));
+        if (direction === 'desc') group.reverse();
+        result.push(...group.map(f => f.name));
+    }
+    return result;
+}
+
+/**
+ * Check each seam: last event of file N should sit just before first event of file N+1.
+ */
+function verifyStitchSeams(orderedNames) {
+    const report = [];
+    for (let i = 1; i < orderedNames.length; i++) {
+        const prev = state.files.find(f => f.name === orderedNames[i - 1]);
+        const next = state.files.find(f => f.name === orderedNames[i]);
+        if (!prev || !next) continue;
+
+        // Only verify within the same logical stream
+        if (getStitchFamilyKey(prev) !== getStitchFamilyKey(next)) {
+            report.push({
+                severity: 'info',
+                kind: 'stream',
+                message: `Boundary between different log streams (${getStitchListLabel(prev)} → ${getStitchListLabel(next)})`
+            });
+            continue;
+        }
+
+        const pb = getFileLogTimeBounds(prev);
+        const nb = getFileLogTimeBounds(next);
+        if (!pb || !nb) {
+            report.push({
+                severity: 'info',
+                kind: 'unknown',
+                message: `Could not time-verify seam after “${getStitchListLabel(prev)}”`
+            });
+            continue;
+        }
+
+        const gapMs = nb.first - pb.last;
+        const gapLabel = gapMs < 1000
+            ? `${Math.round(gapMs)}ms`
+            : gapMs < 60000
+                ? `${(gapMs / 1000).toFixed(1)}s`
+                : gapMs < 3600000
+                    ? `${Math.round(gapMs / 60000)}m`
+                    : `${(gapMs / 3600000).toFixed(1)}h`;
+
+        if (gapMs < -2000) {
+            report.push({
+                severity: 'warning',
+                kind: 'order',
+                message: `Possible wrong order: next file starts ${gapLabel} before previous ends (${getStitchListLabel(prev)} → ${getStitchListLabel(next)})`
+            });
+        } else if (gapMs > 5 * 60 * 1000) {
+            report.push({
+                severity: 'info',
+                kind: 'gap',
+                message: `Time gap of ${gapLabel} between archives (${getStitchListLabel(prev)} → ${getStitchListLabel(next)}) — normal if the service was stopped or idle`
+            });
+        } else {
+            report.push({
+                severity: 'ok',
+                kind: 'ok',
+                message: `Seam OK (${gapLabel}): ${formatLogDateTime(pb.last)} → ${formatLogDateTime(nb.first)}`
+            });
+        }
+    }
+    return report;
+}
+
+function getStitchOrderFromDom() {
+    const items = document.querySelectorAll('#stitchFileList .sortable-item');
+    const ordered = [];
+    items.forEach(item => {
+        const cb = item.querySelector('input[type="checkbox"]');
+        if (cb && cb.checked) ordered.push(cb.value);
+    });
+    return ordered;
+}
+
+function isStitchBreakEntry(entry) {
+    if (!entry) return false;
+    if (entry.isSeparator || entry.type === 'separator') return true;
+    const raw = entry.raw || '';
+    return /STITCH BREAK|END OF STITCHED LOG/i.test(raw);
 }
 
 /**
@@ -4319,7 +4656,6 @@ function initFilters() {
             altInput: true,
             altFormat: "d/m/Y H:i",
             altInputClass: "date-input",
-            theme: "dark",
             onChange: handleDateChange
         };
         
@@ -4770,7 +5106,11 @@ function handleCompareScroll(event, sourceIndex) {
         compareRoot.querySelectorAll('.compare-panel-content').forEach((panel) => {
             const index = parseInt(panel.getAttribute('data-panel-index'), 10);
             if (!isNaN(index) && index !== sourceIndex && state.timeSyncOffsets[index] !== undefined) {
-                panel.scrollTop = state.timeSyncOffsets[index] + delta;
+                const target = state.timeSyncOffsets[index] + delta;
+                // Avoid redundant assignments (each assignment fires scroll + virtual re-render)
+                if (Math.abs(panel.scrollTop - target) > 0.5) {
+                    panel.scrollTop = target;
+                }
             }
         });
         
@@ -4779,10 +5119,11 @@ function handleCompareScroll(event, sourceIndex) {
             window.electronAPI.broadcastSync('scroll-sync', { sourceIndex, delta });
         }
         
-        // Use setTimeout to reset the flag after the scroll events fire
-        setTimeout(() => {
-            isSyncingScroll = false;
-        }, 50);
+        // Clear immediately. Chromium fires nested scroll events synchronously when
+        // scrollTop is set, so the flag already suppressed echo. Using setTimeout(50)
+        // previously dropped user scroll events during continuous wheel/trackpad input
+        // and made panels lag then catch up.
+        isSyncingScroll = false;
         
         return;
     }
@@ -4791,19 +5132,21 @@ function handleCompareScroll(event, sourceIndex) {
     if (!state.syncScroll) return;
     
     isSyncingScroll = true;
-    const scrollRatio = sourcePanel.scrollTop / (sourcePanel.scrollHeight - sourcePanel.clientHeight);
+    const maxSource = sourcePanel.scrollHeight - sourcePanel.clientHeight;
+    const scrollRatio = maxSource > 0 ? sourcePanel.scrollTop / maxSource : 0;
     
     compareRoot.querySelectorAll('.compare-panel-content').forEach((panel) => {
         const index = parseInt(panel.getAttribute('data-panel-index'), 10);
         if (!isNaN(index) && index !== sourceIndex) {
-            const targetScrollTop = scrollRatio * (panel.scrollHeight - panel.clientHeight);
-            panel.scrollTop = targetScrollTop;
+            const maxTarget = panel.scrollHeight - panel.clientHeight;
+            const targetScrollTop = scrollRatio * Math.max(0, maxTarget);
+            if (Math.abs(panel.scrollTop - targetScrollTop) > 0.5) {
+                panel.scrollTop = targetScrollTop;
+            }
         }
     });
     
-    setTimeout(() => {
-        isSyncingScroll = false;
-    }, 50);
+    isSyncingScroll = false;
 }
 
 function toggleSyncScroll() {
@@ -6634,7 +6977,7 @@ function toggleStitchMode() {
         state.stitchedFiles = [];
         const cf = state.files[state.currentFileIndex];
         if (cf && cf.isStitched && Array.isArray(cf.sourceFiles)) {
-            displayStitchLegend(cf.sourceFiles);
+            displayStitchLegend(cf.sourceFiles, cf.seamReport);
         }
     }
 }
@@ -6700,67 +7043,8 @@ function populateStitchFileList() {
         return;
     }
     
-    // Sort files logically to stitch them in chronological order
-    logFiles.sort((a, b) => {
-        const parseFilename = (filename) => {
-            const lower = filename.toLowerCase();
-            
-            // Check for suffix rotation: .log.1, .txt.2
-            const suffixMatch = lower.match(/^(.*(?:\.log|\.txt|\.cfg))\.(\d+)$/);
-            if (suffixMatch) {
-                const val = parseInt(suffixMatch[2], 10);
-                // Dates like .20240319 might appear as suffix
-                if (suffixMatch[2].length === 8 && suffixMatch[2].startsWith('20')) {
-                    return { base: suffixMatch[1], type: 'date', val: val };
-                }
-                return { base: suffixMatch[1], type: 'rotation', val: val };
-            }
-            
-            // Check for inline rotation or date: Debugging_Log_20260223.txt or Integration Service Log 001.log
-            const inlineMatch = lower.match(/^(.*?)[_\-\s\(]+(\d+)[\)]?(?:\.(?:log|txt|cfg))$/);
-            if (inlineMatch) {
-                const ext = lower.match(/\.(log|txt|cfg)$/)?.[0] || '';
-                const base = inlineMatch[1].trim() + ext;
-                const val = parseInt(inlineMatch[2], 10);
-                
-                // If it's exactly 8 digits and starts with 20 (e.g. 2024...), treat as date
-                if (inlineMatch[2].length === 8 && inlineMatch[2].startsWith('20')) {
-                    return { base: base, type: 'date', val: val };
-                }
-                // Otherwise treat as rotation index (like _001, _002)
-                return { base: base, type: 'rotation', val: val };
-            }
-            
-            // Base file (e.g. Debugging_Log.txt, Integration_Log.txt)
-            return { base: lower, type: 'base', val: 0 };
-        };
-
-        const parsedA = parseFilename(a.name);
-        const parsedB = parseFilename(b.name);
-
-        // Group by base filename
-        const baseCompare = parsedA.base.localeCompare(parsedB.base, undefined, {numeric: true, sensitivity: 'base'});
-        if (baseCompare !== 0) return baseCompare;
-
-        // Within same log group:
-        // Base file always at the bottom (newest)
-        if (parsedA.type === 'base' && parsedB.type !== 'base') return 1;
-        if (parsedB.type === 'base' && parsedA.type !== 'base') return -1;
-        if (parsedA.type === 'base' && parsedB.type === 'base') return 0;
-
-        // If both are dates, sort ascending (smaller/older date first)
-        if (parsedA.type === 'date' && parsedB.type === 'date') {
-            return parsedA.val - parsedB.val;
-        }
-
-        // If both are rotation indices, sort descending (higher/older number first)
-        if (parsedA.type === 'rotation' && parsedB.type === 'rotation') {
-            return parsedB.val - parsedA.val;
-        }
-
-        // Fallback
-        return a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'});
-    });
+    // Order each log stream oldest → newest (current/live file last) using content timestamps
+    logFiles = sortFilesForStitch(logFiles);
     
     let html = '';
     logFiles.forEach((file, index) => {
@@ -6779,10 +7063,10 @@ function populateStitchFileList() {
                 <div class="stitch-order-badge" style="background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin-right: 8px; width: 24px; text-align: center;">
                     ${index + 1}
                 </div>
-                <label style="display: flex; align-items: center; flex: 1; cursor: pointer; margin: 0;">
-                    <input type="checkbox" value="${escapeHtml(file.name)}" onchange="updateStitchSelection()" style="margin-right: 8px;">
-                    <span class="file-name" style="flex: 1;">${escapeHtml(getDisplayFileName(file))}</span>
-                    <span class="file-info" style="font-size: 0.8rem; color: var(--text-secondary);">
+                <label style="display: flex; align-items: center; flex: 1; cursor: pointer; margin: 0; gap: 8px;">
+                    <input type="checkbox" value="${escapeHtml(file.name)}" onchange="updateStitchSelection()" style="margin-right: 4px;">
+                    <span class="file-name" style="flex: 1; line-height: 1.35;">${escapeHtml(getStitchListLabel(file))}</span>
+                    <span class="file-info" style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap;">
                         ${file.lines.length.toLocaleString()} lines | ${formatFileSize(file.size)}
                     </span>
                 </label>
@@ -6873,20 +7157,9 @@ function groupFilesByType(files) {
 }
 
 function updateStitchSelection() {
-    const items = document.querySelectorAll('#stitchFileList .sortable-item');
-    state.stitchedFiles = [];
-    items.forEach(item => {
-        const cb = item.querySelector('input[type="checkbox"]');
-        if (cb && cb.checked) {
-            state.stitchedFiles.push(cb.value);
-        }
-    });
-    
-    // Check direction
-    const direction = document.getElementById('stitchDirection')?.value || 'asc';
-    if (direction === 'desc') {
-        state.stitchedFiles.reverse();
-    }
+    // DOM order is the intended stitch order (list is pre-sorted oldest→newest).
+    // Direction is applied at stitch time via refineStitchOrderByContent.
+    state.stitchedFiles = getStitchOrderFromDom();
     
     const btn = document.getElementById('performStitchBtn');
     const exportBtn = document.getElementById('exportStitchedBtn');
@@ -6937,11 +7210,30 @@ async function performStitchAsync() {
     // Gather all log entries from selected files
     const allEntries = [];
     let totalLines = 0;
-    const totalFiles = state.stitchedFiles.length;
-    let processedFiles = 0;
     
-    // The files are already sorted by the user in the UI
-    const sortedFiles = state.stitchedFiles.slice();
+    // Resolve order from the stitch list, then refine by content timestamps
+    // within each log family (Business Engine archives, Comms archives, etc.)
+    let sortedFiles = refineStitchOrderByContent(getStitchOrderFromDom());
+    if (sortedFiles.length < 2) {
+        sortedFiles = refineStitchOrderByContent(state.stitchedFiles.slice());
+    }
+    state.stitchedFiles = sortedFiles.slice();
+
+    const seamReport = verifyStitchSeams(sortedFiles);
+    const seamOrderIssues = seamReport.filter(r => r.kind === 'order');
+    const seamGaps = seamReport.filter(r => r.kind === 'gap');
+    if (seamOrderIssues.length) {
+        console.warn('[Stitch] Possible order issues at seams:', seamOrderIssues);
+    }
+    if (seamGaps.length) {
+        console.info('[Stitch] Time gaps between archives (often normal after stop/restart):', seamGaps);
+    }
+    if (!seamOrderIssues.length && !seamGaps.length) {
+        console.log('[Stitch] Seam verification:', seamReport);
+    }
+
+    const totalFiles = sortedFiles.length;
+    let processedFiles = 0;
     
     // Process files in chunks to keep UI responsive
     for (const fileName of sortedFiles) {
@@ -7046,7 +7338,8 @@ async function performStitchAsync() {
         sourceFiles: sortedFiles, // Keep the sorted array
         entries: finalEntries,
         isConfig: false,
-        skipErrorRendering: skipErrorRendering
+        skipErrorRendering: skipErrorRendering,
+        seamReport: seamReport
     };
     
     // Parse the stitched data
@@ -7079,10 +7372,26 @@ async function performStitchAsync() {
     // Hide loader
     hideStitchingLoader();
     
-    // Close stitch panel
+    // Close stitch panel (clears state.stitchedFiles — use locals for toasts below)
     toggleStitchMode();
     
-    showToast(`✓ Successfully stitched ${state.stitchedFiles.length} files with ${finalEntries.length.toLocaleString()} log entries`, 'success');
+    const sourceCount = sortedFiles.length;
+    const logEntryCount = finalEntries.filter(e => !e.isSeparator).length;
+    showToast(`Successfully stitched ${sourceCount} files · ${logEntryCount.toLocaleString()} log entries`, 'success');
+
+    if (seamOrderIssues.length) {
+        showToast(
+            `${seamOrderIssues.length} possible order issue${seamOrderIssues.length === 1 ? '' : 's'} at file boundaries — use Show File Breaks to review`,
+            'warning'
+        );
+    } else if (seamGaps.length) {
+        showToast(
+            `${seamGaps.length} time gap${seamGaps.length === 1 ? '' : 's'} between archives — usually fine if the service was stopped or idle`,
+            'info'
+        );
+    } else if (seamReport.some(r => r.severity === 'ok')) {
+        showToast('File boundaries look continuous (timestamps line up)', 'info');
+    }
 }
 
 function showStitchingLoader(fileCount) {
@@ -7222,171 +7531,256 @@ function toggleStitchBreaksVisibility() {
             gutter.classList.add('hide-stitch-breaks');
         }
     }
+
+    // Re-render so virtual-scroll heights stay correct (display:none on separators breaks scroll math)
+    if (state.currentFileIndex >= 0) {
+        const currentFile = state.files[state.currentFileIndex];
+        if (currentFile && currentFile.isStitched) {
+            displayStitchedLog(currentFile);
+        }
+    }
+}
+
+function collectStitchBreakIndices(filteredLines) {
+    const breakIndices = [];
+    for (let i = 0; i < filteredLines.length; i++) {
+        if (isStitchBreakEntry(filteredLines[i])) breakIndices.push(i);
+    }
+    return breakIndices;
+}
+
+/**
+ * Resolve which stitch break the user is "on" so next/prev can advance correctly.
+ * Prefer the last jumped break if it is still near viewport center; otherwise nearest to center.
+ */
+function resolveCurrentStitchBreakIndex(vs, breakIndices) {
+    if (!breakIndices.length) return null;
+
+    const centerIndex = Math.floor(
+        (vs.contentEl.scrollTop + (vs.contentEl.clientHeight / 2)) / vs.lineHeight
+    );
+    const halfView = Math.max(8, Math.ceil(vs.contentEl.clientHeight / vs.lineHeight / 2) + 4);
+
+    const last = state.lastStitchBreakJumpIndex;
+    if (last != null && breakIndices.includes(last) && Math.abs(last - centerIndex) <= halfView) {
+        return last;
+    }
+
+    let nearest = breakIndices[0];
+    let nearestDist = Math.abs(nearest - centerIndex);
+    for (let i = 1; i < breakIndices.length; i++) {
+        const dist = Math.abs(breakIndices[i] - centerIndex);
+        if (dist < nearestDist) {
+            nearest = breakIndices[i];
+            nearestDist = dist;
+        }
+    }
+
+    // Only treat as "current" when a break is actually in/near view
+    if (nearestDist <= halfView) return nearest;
+    return null;
 }
 
 function jumpToNextStitchBreak() {
+    ensureStitchBreaksVisibleForJump();
+
     if (state.virtualScroll && state.virtualScroll.active) {
         const vs = state.virtualScroll;
-        
-        // Find all stitch breaks in currently filtered lines
-        const breakIndices = [];
-        for (let i = 0; i < vs.filteredLines.length; i++) {
-            if (vs.filteredLines[i].isSeparator) {
-                breakIndices.push(i);
-            }
-        }
-        
+        const breakIndices = collectStitchBreakIndices(vs.filteredLines);
+
         if (breakIndices.length === 0) {
             showToast('No stitch breaks found', 'info');
             return;
         }
 
-        // Calculate current center index
-        const centerIndex = Math.floor((vs.contentEl.scrollTop + (vs.contentEl.clientHeight / 2)) / vs.lineHeight);
-        
-        // Find the first break that is strictly BELOW our current center plus a tiny buffer
+        const centerIndex = Math.floor(
+            (vs.contentEl.scrollTop + (vs.contentEl.clientHeight / 2)) / vs.lineHeight
+        );
+        const current = resolveCurrentStitchBreakIndex(vs, breakIndices);
+
         let targetIndex = -1;
-        for (const idx of breakIndices) {
-            if (idx > centerIndex + 2) {
-                targetIndex = idx;
-                break;
+        if (current != null) {
+            const pos = breakIndices.indexOf(current);
+            if (pos >= 0 && pos < breakIndices.length - 1) {
+                targetIndex = breakIndices[pos + 1];
+            }
+        } else {
+            for (const idx of breakIndices) {
+                if (idx > centerIndex) {
+                    targetIndex = idx;
+                    break;
+                }
+            }
+            // If we're above all breaks, go to the first
+            if (targetIndex === -1 && centerIndex < breakIndices[0]) {
+                targetIndex = breakIndices[0];
             }
         }
-        
-        if (targetIndex !== -1) {
-            // Calculate pixel position to center it
-            const scrollPos = targetIndex * vs.lineHeight - (vs.contentEl.clientHeight / 2);
-            
-            // Instant scroll to avoid browser smooth-scroll bugs over massive pixel distances
-            vs.contentEl.scrollTop = Math.max(0, scrollPos);
-            
-            // Explicitly force a viewport update immediately so the DOM node exists
-            updateViewerViewport();
-            
-            // Try to highlight it after virtual scroll has a moment to render the new chunk
-            setTimeout(() => {
-                const el = vs.contentEl.querySelector(`.log-line.stitched-separator[data-vindex="${targetIndex}"]`);
-                if (el) {
-                    el.classList.add('highlight');
-                    setTimeout(() => el.classList.remove('highlight'), 2000);
-                }
-            }, 50); 
-            return;
-        } else {
+
+        if (targetIndex === -1) {
             showToast('Already at the last stitch break', 'info');
             return;
         }
-    }
 
-    const breaks = Array.from(document.querySelectorAll('.log-line.stitched-separator'));
-    if (!breaks.length) {
-        showToast('No stitch breaks found in current view', 'info');
+        scrollVirtualViewerToIndex(targetIndex);
         return;
     }
-    
-    const container = document.getElementById('logContainer');
-    if (!container) return;
-    
-    const containerTop = container.getBoundingClientRect().top;
-    
-    let target = null;
-    for (const br of breaks) {
-        const rect = br.getBoundingClientRect();
-        if (rect.top > containerTop + 20) {
-            target = br;
-            break;
-        }
-    }
-    
-    if (target) {
-        target.scrollIntoView({ behavior: 'auto', block: 'center' });
-        target.classList.add('highlight');
-        setTimeout(() => target.classList.remove('highlight'), 2000);
-    } else {
-        showToast('Already at the last stitch break', 'info');
-    }
+
+    jumpStitchBreakDom('next');
 }
 
 function jumpToPrevStitchBreak() {
+    ensureStitchBreaksVisibleForJump();
+
     if (state.virtualScroll && state.virtualScroll.active) {
         const vs = state.virtualScroll;
-        
-        // Find all stitch breaks in currently filtered lines
-        const breakIndices = [];
-        for (let i = 0; i < vs.filteredLines.length; i++) {
-            if (vs.filteredLines[i].isSeparator) {
-                breakIndices.push(i);
-            }
-        }
-        
+        const breakIndices = collectStitchBreakIndices(vs.filteredLines);
+
         if (breakIndices.length === 0) {
             showToast('No stitch breaks found', 'info');
             return;
         }
 
-        // Calculate current center index
-        const centerIndex = Math.floor((vs.contentEl.scrollTop + (vs.contentEl.clientHeight / 2)) / vs.lineHeight);
-        
-        // Find the first break that is strictly ABOVE our current center minus a tiny buffer
+        const centerIndex = Math.floor(
+            (vs.contentEl.scrollTop + (vs.contentEl.clientHeight / 2)) / vs.lineHeight
+        );
+        const current = resolveCurrentStitchBreakIndex(vs, breakIndices);
+
         let targetIndex = -1;
-        for (let i = breakIndices.length - 1; i >= 0; i--) {
-            if (breakIndices[i] < centerIndex - 2) {
-                targetIndex = breakIndices[i];
-                break;
+        if (current != null) {
+            const pos = breakIndices.indexOf(current);
+            if (pos > 0) {
+                targetIndex = breakIndices[pos - 1];
+            }
+        } else {
+            for (let i = breakIndices.length - 1; i >= 0; i--) {
+                if (breakIndices[i] < centerIndex) {
+                    targetIndex = breakIndices[i];
+                    break;
+                }
             }
         }
-        
-        if (targetIndex !== -1) {
-            const scrollPos = targetIndex * vs.lineHeight - (vs.contentEl.clientHeight / 2);
-            
-            // Instant scroll
-            vs.contentEl.scrollTop = Math.max(0, scrollPos);
-            
-            // Explicitly force a viewport update
-            updateViewerViewport();
-            
-            // Try to highlight it after rendering
-            setTimeout(() => {
-                const el = vs.contentEl.querySelector(`.log-line.stitched-separator[data-vindex="${targetIndex}"]`);
-                if (el) {
-                    el.classList.add('highlight');
-                    setTimeout(() => el.classList.remove('highlight'), 2000);
-                }
-            }, 50);
-            return;
-        } else {
+
+        if (targetIndex === -1) {
             showToast('Already at the first stitch break', 'info');
             return;
         }
+
+        scrollVirtualViewerToIndex(targetIndex);
+        return;
     }
 
+    jumpStitchBreakDom('prev');
+}
+
+function jumpStitchBreakDom(direction) {
     const breaks = Array.from(document.querySelectorAll('.log-line.stitched-separator'));
     if (!breaks.length) {
         showToast('No stitch breaks found in current view', 'info');
         return;
     }
-    
-    const container = document.getElementById('logContainer');
+
+    const container = document.getElementById('logContent') || document.getElementById('logContainer');
     if (!container) return;
-    
-    const containerTop = container.getBoundingClientRect().top;
-    
-    let target = null;
-    for (let i = breaks.length - 1; i >= 0; i--) {
-        const rect = breaks[i].getBoundingClientRect();
-        if (rect.top < containerTop - 20) {
-            target = breaks[i];
-            break;
+
+    const viewMid = container.getBoundingClientRect().top + (container.clientHeight / 2);
+    let currentIdx = -1;
+    let nearestDist = Infinity;
+    breaks.forEach((br, i) => {
+        const mid = br.getBoundingClientRect().top + (br.getBoundingClientRect().height / 2);
+        const dist = Math.abs(mid - viewMid);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            currentIdx = i;
+        }
+    });
+
+    // If nothing is near center, pick by direction from mid
+    if (nearestDist > container.clientHeight / 2) {
+        currentIdx = -1;
+        if (direction === 'next') {
+            for (let i = 0; i < breaks.length; i++) {
+                if (breaks[i].getBoundingClientRect().top > viewMid) {
+                    currentIdx = i - 1;
+                    break;
+                }
+            }
+            if (currentIdx === -1 && breaks[breaks.length - 1].getBoundingClientRect().top <= viewMid) {
+                currentIdx = breaks.length - 1;
+            }
+        } else {
+            for (let i = breaks.length - 1; i >= 0; i--) {
+                if (breaks[i].getBoundingClientRect().top < viewMid) {
+                    currentIdx = i + 1;
+                    break;
+                }
+            }
+            if (currentIdx === -1 && breaks[0].getBoundingClientRect().top >= viewMid) {
+                currentIdx = 0;
+            }
         }
     }
-    
-    if (target) {
-        target.scrollIntoView({ behavior: 'auto', block: 'center' });
-        target.classList.add('highlight');
-        setTimeout(() => target.classList.remove('highlight'), 2000);
-    } else {
+
+    let targetIdx = direction === 'next' ? currentIdx + 1 : currentIdx - 1;
+    if (targetIdx < 0) {
         showToast('Already at the first stitch break', 'info');
+        return;
     }
+    if (targetIdx >= breaks.length) {
+        showToast('Already at the last stitch break', 'info');
+        return;
+    }
+
+    const target = breaks[targetIdx];
+    target.scrollIntoView({ behavior: 'auto', block: 'center' });
+    target.classList.add('highlight');
+    setTimeout(() => target.classList.remove('highlight'), 2000);
+}
+
+function ensureStitchBreaksVisibleForJump() {
+    const toggle = document.getElementById('toggleStitchBreaks');
+    if (toggle && !toggle.checked) {
+        toggle.checked = true;
+        const content = document.getElementById('logContent');
+        const gutter = document.getElementById('logGutter');
+        if (content) content.classList.remove('hide-stitch-breaks');
+        if (gutter) gutter.classList.remove('hide-stitch-breaks');
+        // Synchronous re-render so jump sees separators in filteredLines immediately
+        if (state.currentFileIndex >= 0) {
+            const currentFile = state.files[state.currentFileIndex];
+            if (currentFile && currentFile.isStitched) {
+                // Force immediate path (skip the 50ms loader deferral for jump)
+                const gutterEl = document.getElementById('logGutter');
+                const contentEl = document.getElementById('logContent');
+                let filtered = filterLines(currentFile.entries);
+                filtered = sortLogLinesByDate(filtered);
+                renderLogOptimized(currentFile, filtered, gutterEl, contentEl);
+                finalizeStitchedLogDisplay(currentFile, filtered, contentEl, gutterEl);
+            }
+        }
+        showToast('Stitch breaks shown so jump can find them', 'info');
+        return true;
+    }
+    return false;
+}
+
+function scrollVirtualViewerToIndex(targetIndex) {
+    const vs = state.virtualScroll;
+    if (!vs || !vs.active) return;
+
+    state.lastStitchBreakJumpIndex = targetIndex;
+
+    const scrollPos = targetIndex * vs.lineHeight - (vs.contentEl.clientHeight / 2) + (vs.lineHeight / 2);
+    vs.contentEl.scrollTop = Math.max(0, scrollPos);
+    updateViewerViewport(true);
+
+    requestAnimationFrame(() => {
+        const el = vs.contentEl.querySelector(`.log-line.stitched-separator[data-vindex="${targetIndex}"]`);
+        if (el) {
+            el.classList.add('highlight');
+            setTimeout(() => el.classList.remove('highlight'), 2000);
+        }
+    });
 }
 
 function parseTimestampForStitch(timestampStr) {
@@ -7438,11 +7832,19 @@ function displayStitchedLog(fileData) {
     if (toggleContainer) {
         toggleContainer.style.display = 'flex';
     }
+
+    state.lastStitchBreakJumpIndex = null;
     
     // Update date filter limits based on the stitched log entries
     updateDateFilterLimits(fileData.entries);
     
     let filtered = filterLines(fileData.entries);
+
+    // When stitch breaks are hidden, drop separators from the data so virtual scroll heights stay correct
+    const showBreaks = document.getElementById('toggleStitchBreaks')?.checked !== false;
+    if (!showBreaks) {
+        filtered = filtered.filter(e => !isStitchBreakEntry(e));
+    }
     
     // Apply date sorting if enabled
     filtered = sortLogLinesByDate(filtered);
@@ -7487,7 +7889,7 @@ function finalizeStitchedLogDisplay(fileData, filtered, content, gutter) {
     content.style.whiteSpace = state.settings.wordWrap ? 'pre-wrap' : 'pre';
     
     // Show legend for source files
-    displayStitchLegend(fileData.sourceFiles);
+    displayStitchLegend(fileData.sourceFiles, fileData.seamReport);
 }
 
 function hideStitchLegend() {
@@ -7495,9 +7897,18 @@ function hideStitchLegend() {
     if (existing) existing.remove();
 }
 
-function displayStitchLegend(sourceFiles) {
+function displayStitchLegend(sourceFiles, seamReport) {
     hideStitchLegend();
     
+    const gaps = Array.isArray(seamReport) ? seamReport.filter(r => r.kind === 'gap') : [];
+    const orderIssues = Array.isArray(seamReport) ? seamReport.filter(r => r.kind === 'order') : [];
+    let noteHtml = '';
+    if (orderIssues.length) {
+        noteHtml = `<p class="stitch-legend-note stitch-legend-note-warn">${orderIssues.length} boundary may be out of order — check Show File Breaks</p>`;
+    } else if (gaps.length) {
+        noteHtml = `<p class="stitch-legend-note">${gaps.length} time gap${gaps.length === 1 ? '' : 's'} between archives (normal after stop/restart)</p>`;
+    }
+
     const legend = document.createElement('div');
     legend.id = 'stitchLegend';
     legend.className = 'stitch-legend';
@@ -7508,12 +7919,15 @@ function displayStitchLegend(sourceFiles) {
         </div>
         <div class="stitch-legend-items">
             ${sourceFiles.map(fileName => {
+                const file = state.files.find(f => f.name === fileName) || { name: fileName, originalName: fileName };
                 const color = getFileColor(fileName);
+                const label = getStitchListLabel(file);
                 return `<span class="legend-item">
                 <span class="legend-dot" style="background: ${color};"></span>
-                ${escapeHtml(fileName)}
+                <span title="${escapeHtml(fileName)}">${escapeHtml(label)}</span>
             </span>`;
             }).join('')}
+            ${noteHtml}
         </div>
     `;
     
@@ -8023,7 +8437,7 @@ function updateHighlightRulesList() {
                 </button>
             </div>
             <div style="flex: 1;">
-                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.875rem; margin-bottom: 0.375rem;">
+                <div style="font-family: var(--font-mono); font-size: 0.875rem; margin-bottom: 0.375rem;">
                     <span style="color: ${rule.textColor}; background-color: ${rule.backgroundColor}; padding: 2px 6px; border-radius: 3px;">${escapeHtml(rule.pattern)}</span>
                     ${rule.caseSensitive ? '<span style="margin-left: 0.5rem; font-size: 0.75rem; color: var(--text-tertiary);">(case sensitive)</span>' : ''}
                 </div>
@@ -8031,8 +8445,8 @@ function updateHighlightRulesList() {
                     ${appliesTo}
                 </div>
                 <div style="font-size: 0.6875rem; color: var(--text-tertiary);">
-                    Text: <span style="font-family: 'JetBrains Mono', monospace;">${rule.textColor}</span> &middot; 
-                    Bg: <span style="font-family: 'JetBrains Mono', monospace;">${rule.backgroundColor}</span>
+                    Text: <span style="font-family: var(--font-mono);">${rule.textColor}</span> &middot; 
+                    Bg: <span style="font-family: var(--font-mono);">${rule.backgroundColor}</span>
                 </div>
             </div>
             <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -9701,7 +10115,7 @@ function createSeverityChart() {
                     labels: {
                         color: '#94a3b8',
                         font: {
-                            family: 'Outfit, sans-serif'
+                            family: '"Segoe UI", system-ui, sans-serif'
                         }
                     }
                 }
@@ -9901,7 +10315,7 @@ function createFileComparisonChart() {
                     labels: {
                         color: '#94a3b8',
                         font: {
-                            family: 'Outfit, sans-serif'
+                            family: '"Segoe UI", system-ui, sans-serif'
                         }
                     }
                 }
